@@ -1,17 +1,15 @@
+
 name: Deploy Supabase Edge Functions
 
 on:
   push:
     branches: [ main ]
-    paths:
-      - 'supabase/functions/**'
-      - 'supabase/config.toml'
-      - '.github/workflows/deploy-supabase-functions.yml'
   workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
