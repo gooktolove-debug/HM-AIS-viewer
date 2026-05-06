@@ -1,32 +1,87 @@
-name: Deploy Supabase Edge Functions
 
-on:
-  push:
-    branches: [ main ]
-    paths:
-      - 'supabase/functions/**'
-      - 'supabase/config.toml'
-      - '.github/workflows/deploy-supabase-functions.yml'
-  workflow_dispatch:
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "GET, OPTIONS",
+};
 
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+function jsonResponse(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body, null, 2), {
+    status,
+    headers: {
+      ...corsHeaders,
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+    },
+  });
+}
 
-      - name: Setup Supabase CLI
-        uses: supabase/setup-cli@v1
-        with:
-          version: latest
+Deno.serve(async (req: Request) => {
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
 
-      - name: Link Supabase project
-        run: supabase link --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+  if (req.method !== "GET") {
+    return jsonResponse({ error: "Method not allowed" }, 405);
+  }
 
-      - name: Deploy ais-latest function
-        run: supabase functions deploy ais-latest
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+  const now = new Date().toISOString();
+
+  return jsonResponse({
+    ok: true,
+    provider: "demo",
+    vessels: [
+      {
+        mmsi: 512345001,
+        imo: 9412345,
+        name: "DEMO ATLAS TRADER",
+        callsign: "ZMAT1",
+        type: 70,
+        lat: -36.8357,
+        lon: 174.7921,
+        sog: 8.4,
+        cog: 262,
+        heading: 260,
+        navStatus: 0,
+        destination: "AUCKLAND",
+        eta: "",
+        received_at: now,
+        source: "demo",
+      },
+      {
+        mmsi: 512345002,
+        imo: 9323456,
+        name: "DEMO HAURAKI STAR",
+        callsign: "ZMHS2",
+        type: 80,
+        lat: -36.8068,
+        lon: 174.8466,
+        sog: 0.1,
+        cog: 89,
+        heading: 91,
+        navStatus: 1,
+        destination: "ANCHORAGE",
+        eta: "",
+        received_at: now,
+        source: "demo",
+      },
+      {
+        mmsi: 512345003,
+        imo: 0,
+        name: "DEMO WAITEMATA PILOT",
+        callsign: "ZMWP3",
+        type: 52,
+        lat: -36.8424,
+        lon: 174.7819,
+        sog: 12.1,
+        cog: 33,
+        heading: 35,
+        navStatus: 0,
+        destination: "PILOT STATION",
+        eta: "",
+        received_at: now,
+        source: "demo",
+      },
+    ],
+  });
+});
