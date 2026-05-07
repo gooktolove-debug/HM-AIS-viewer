@@ -48,9 +48,13 @@ jobs:
 
           ws.on('message', async (msg) => {
             try {
+              console.log("RAW:", msg.toString());
+              
               const data = JSON.parse(msg);
 
               if (data?.Message?.PositionReport) {
+                console.log("AIS RECEIVED");
+                
                 const v = data.Message.PositionReport;
 
                 const payload = {
