@@ -1,0 +1,89 @@
+
+name: AIS Stream Worker
+
+on:
+  workflow_dispatch:
+
+jobs:
+  stream:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install deps
+        run: npm install ws
+
+      - name: Run AIS Listener
+        env:
+          AIS_API_KEY: ${{ secrets.AIS_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          node <<EOF
+          const WebSocket = require('ws');
+
+          const ws = new WebSocket('wss://stream.aisstream.io/v0/stream', {
+            headers: {
+              Authorization: process.env.AIS_API_KEY
+            }
+          });
+
+          console.log("Connecting to AISStream...");
+
+          ws.on('open', () => {
+            console.log("✅ Connected");
+
+            ws.send(JSON.stringify({
+              BoundingBoxes: [[
+                [-36.95, 174.65],
+                [-36.70, 175.05]
+              ]]
+            }));
+          });
+
+          ws.on('message', async (msg) => {
+            try {
+              const data = JSON.parse(msg);
+
+              if (data?.Message?.PositionReport) {
+                const v = data.Message.PositionReport;
+
+                const payload = {
+                  mmsi: v.MMSI,
+                  lat: v.Latitude,
+                  lon: v.Longitude,
+                  sog: v.Sog,
+                  cog: v.Cog,
+                  heading: v.TrueHeading || 0,
+                  received_at: new Date().toISOString()
+                };
+
+                await fetch(process.env.SUPABASE_URL + "/rest/v1/ais_latest?on_conflict=mmsi", {
+                  method: "POST",
+                  headers: {
+                    "apikey": process.env.SUPABASE_KEY,
+                    "Content-Type": "application/json",
+                    "Prefer": "resolution=merge-duplicates"
+                  },
+                  body: JSON.stringify(payload)
+                });
+
+                console.log("Saved:", v.MMSI);
+              }
+            } catch (err) {
+              console.log("Error:", err.message);
+            }
+          });
+
+          ws.on('error', (err) => {
+            console.log("WS Error:", err.message);
+          });
+
+          // keep alive
+          setInterval(() => {}, 1000);
+          EOF
