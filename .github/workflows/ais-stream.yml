@@ -16,7 +16,8 @@ jobs:
           node-version: '20'
 
       - name: Install deps
-        run: npm install ws
+        run: |
+          npm install ws node-fetch
 
       - name: Run AIS Listener
         env:
@@ -26,6 +27,9 @@ jobs:
         run: |
           node <<EOF
           const WebSocket = require('ws');
+          const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+
+          console.log("Connecting to AISStream...");
 
           const ws = new WebSocket('wss://stream.aisstream.io/v0/stream', {
             headers: {
@@ -33,33 +37,32 @@ jobs:
             }
           });
 
-          console.log("Connecting to AISStream...");
-
           ws.on('open', () => {
             console.log("✅ Connected");
 
-            // ✅ NZ 전체로 넓힘 (중요!)
+            // 🌏 NZ 전체 범위 (확실히 데이터 나옴)
             ws.send(JSON.stringify({
               BoundingBoxes: [[
-                [-40, 170],
-                [-30, 180]
+                [-45, 160],
+                [-25, 185]
               ]]
             }));
           });
 
           ws.on('message', async (msg) => {
-            try {
-              console.log("🔥 RAW:", msg.toString());
 
+            console.log("🔥 RAW:", msg.toString());
+
+            try {
               const data = JSON.parse(msg);
-              console.log("Parsed:", JSON.stringify(data));
+              console.log("Parsed message");
 
               if (!data.Message) return;
 
-              let v = data.Message.PositionReport;
+              const v = data.Message.PositionReport;
 
               if (!v) {
-                console.log("No PositionReport, skip");
+                console.log("Skip non-position message");
                 return;
               }
 
@@ -75,15 +78,18 @@ jobs:
                 received_at: new Date().toISOString()
               };
 
-              const res = await fetch(process.env.SUPABASE_URL + "/rest/v1/ais_latest?on_conflict=mmsi", {
-                method: "POST",
-                headers: {
-                  "apikey": process.env.SUPABASE_KEY,
-                  "Content-Type": "application/json",
-                  "Prefer": "resolution=merge-duplicates"
-                },
-                body: JSON.stringify(payload)
-              });
+              const res = await fetch(
+                process.env.SUPABASE_URL + "/rest/v1/ais_latest?on_conflict=mmsi",
+                {
+                  method: "POST",
+                  headers: {
+                    "apikey": process.env.SUPABASE_KEY,
+                    "Content-Type": "application/json",
+                    "Prefer": "resolution=merge-duplicates"
+                  },
+                  body: JSON.stringify(payload)
+                }
+              );
 
               console.log("✅ Saved:", v.MMSI);
 
@@ -96,6 +102,7 @@ jobs:
             console.log("WS Error:", err.message);
           });
 
-          // keep alive
+          // keep running
           setInterval(() => {}, 1000);
+
           EOF
