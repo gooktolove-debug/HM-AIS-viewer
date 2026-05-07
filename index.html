@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Auckland Harbour AIS Viewer - Draft v14</title>
+  <title>Auckland Harbour AIS Viewer - Draft v15</title>
 
   <!-- Leaflet JS only. Critical Leaflet CSS is embedded below to prevent scattered map tiles. -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -37,7 +37,7 @@
 <body>
 <div class="app">
   <aside class="sidebar">
-    <div class="brand"><div class="logo"></div><div><h1>Auckland Harbour AIS Viewer</h1><p class="subtitle">Internal draft v14 / vessel dimensions</p></div></div>
+    <div class="brand"><div class="logo"></div><div><h1>Auckland Harbour AIS Viewer</h1><p class="subtitle">Internal draft v15 / focus tooltip removed</p></div></div>
 
     <div class="card">
       <strong>Real AIS Connection</strong>
@@ -76,7 +76,7 @@ const MOCK=[
 function esc(s){return String(s??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}function num(v,d){v=Number(v);return Number.isFinite(v)?v.toFixed(d):'-'}function metres(v){v=Number(v);return Number.isFinite(v)&&v>0?`${v.toFixed(1)} m`:'-'}
 const map=L.map('map',{zoomControl:true,preferCanvas:true}).setView([-36.84,174.79],11);['tilePane','overlayPane','shadowPane','markerPane','tooltipPane','popupPane'].forEach((paneName,i)=>{const p=map.getPane(paneName);if(p){const z=[200,400,500,650,700,750][i];p.style.zIndex=String(z);}});
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:18,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
-const aucklandBounds=L.latLngBounds([AREAS.auckland.latMin,AREAS.auckland.lonMin],[AREAS.auckland.latMax,AREAS.auckland.lonMax]);const northBounds=L.latLngBounds([AREAS.northIsland.latMin,AREAS.northIsland.lonMin],[AREAS.northIsland.latMax,AREAS.northIsland.lonMax]);L.rectangle(aucklandBounds,{color:'#38bdf8',weight:1,dashArray:'6 6',fillOpacity:.02}).addTo(map).bindTooltip('Auckland Port focus area');
+const aucklandBounds=L.latLngBounds([AREAS.auckland.latMin,AREAS.auckland.lonMin],[AREAS.auckland.latMax,AREAS.auckland.lonMax]);const northBounds=L.latLngBounds([AREAS.northIsland.latMin,AREAS.northIsland.lonMin],[AREAS.northIsland.latMax,AREAS.northIsland.lonMax]);L.rectangle(aucklandBounds,{color:'#38bdf8',weight:1,dashArray:'6 6',fillOpacity:.02}).addTo(map);
 function fix(){requestAnimationFrame(()=>map.invalidateSize(false));setTimeout(()=>map.invalidateSize(false),100);setTimeout(()=>map.invalidateSize(false),500)}window.addEventListener('load',fix);window.addEventListener('resize',fix);if('ResizeObserver'in window)new ResizeObserver(fix).observe(document.getElementById('mapShell'));
 function colour(t,stale){return '#ef4444'}
 function icon(v){
