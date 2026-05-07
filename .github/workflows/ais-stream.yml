@@ -42,6 +42,7 @@ jobs:
 
             // 🌏 NZ 전체 범위 (확실히 데이터 나옴)
             ws.send(JSON.stringify({
+              APIKey: process.env.AIS_API_KEY,
               BoundingBoxes: [[
                 [-45, 160],
                 [-25, 185]
