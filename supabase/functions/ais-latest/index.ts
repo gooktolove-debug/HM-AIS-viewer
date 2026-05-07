@@ -1,7 +1,6 @@
-
 // supabase/functions/ais-latest/index.ts
 // Reads latest AIS positions from Supabase table: public.ais_latest
-// Returns JSON format compatible with HM-AIS-viewer HTML v3.
+// Returns JSON format compatible with HM-AIS-viewer HTML v4.
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -26,40 +25,27 @@ function numberParam(url: URL, name: string, fallback: number): number {
 }
 
 Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
-
-  if (req.method !== "GET") {
-    return jsonResponse({ ok: false, error: "Method not allowed" }, 405);
-  }
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method !== "GET") return jsonResponse({ ok: false, error: "Method not allowed" }, 405);
 
   try {
     const url = new URL(req.url);
-
-    // HTML viewer passes these automatically.
     const latMin = numberParam(url, "latMin", -36.92);
     const latMax = numberParam(url, "latMax", -36.75);
     const lonMin = numberParam(url, "lonMin", 174.66);
     const lonMax = numberParam(url, "lonMax", 174.95);
-
-    // Show only recent data. Default: last 60 minutes.
-    const minutes = numberParam(url, "minutes", 60);
+    const minutes = numberParam(url, "minutes", 1440);
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
 
     if (!supabaseUrl || !anonKey) {
-      return jsonResponse({
-        ok: false,
-        error: "Missing SUPABASE_URL or SUPABASE_ANON_KEY in Edge Function environment.",
-      }, 500);
+      return jsonResponse({ ok: false, error: "Missing SUPABASE_URL or SUPABASE_ANON_KEY." }, 500);
     }
 
     const since = new Date(Date.now() - minutes * 60 * 1000).toISOString();
-
     const restUrl = new URL(`${supabaseUrl}/rest/v1/ais_latest`);
-    restUrl.searchParams.set("select", "mmsi,lat,lon,sog,cog,heading,received_at");
+    restUrl.searchParams.set("select", "mmsi,name,callsign,ship_type,lat,lon,sog,cog,heading,received_at,updated_at");
     restUrl.searchParams.set("lat", `gte.${latMin}`);
     restUrl.searchParams.append("lat", `lte.${latMax}`);
     restUrl.searchParams.set("lon", `gte.${lonMin}`);
@@ -79,21 +65,15 @@ Deno.serve(async (req: Request) => {
 
     if (!res.ok) {
       const errorText = await res.text();
-      return jsonResponse({
-        ok: false,
-        error: "Failed to read ais_latest from Supabase REST.",
-        status: res.status,
-        details: errorText,
-      }, 500);
+      return jsonResponse({ ok: false, error: "Failed to read ais_latest.", status: res.status, details: errorText }, 500);
     }
 
     const rows = await res.json();
-
     const vessels = rows.map((row: any) => ({
       mmsi: row.mmsi,
       imo: 0,
-      name: `MMSI ${row.mmsi}`,
-      callsign: "",
+      name: row.name && String(row.name).trim() ? String(row.name).trim() : `MMSI ${row.mmsi}`,
+      callsign: row.callsign || "",
       type: "Other",
       lat: row.lat,
       lon: row.lon,
@@ -115,9 +95,6 @@ Deno.serve(async (req: Request) => {
       vessels,
     });
   } catch (error) {
-    return jsonResponse({
-      ok: false,
-      error: error instanceof Error ? error.message : String(error),
-    }, 500);
+    return jsonResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }, 500);
   }
 });
