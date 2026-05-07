@@ -1,4 +1,3 @@
-
 name: AIS Stream Worker
 
 on:
@@ -29,230 +28,77 @@ jobs:
           const WebSocket = require('ws');
           const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 
-          const AIS_LATEST_ENDPOINT =
-            process.env.SUPABASE_URL + "/rest/v1/ais_latest?on_conflict=mmsi";
-
-          const AIS_POSITIONS_ENDPOINT =
-            process.env.SUPABASE_URL + "/rest/v1/ais_positions";
-
-          const HISTORY_INTERVAL_MS = 60 * 1000; // same MMSI history save max once per 60 sec
+          const AIS_LATEST_ENDPOINT = process.env.SUPABASE_URL + "/rest/v1/ais_latest?on_conflict=mmsi";
+          const AIS_POSITIONS_ENDPOINT = process.env.SUPABASE_URL + "/rest/v1/ais_positions";
+          const HISTORY_INTERVAL_MS = 60 * 1000;
           const RETENTION_HOURS = 6;
-          const CLEANUP_INTERVAL_MS = 10 * 60 * 1000; // cleanup every 10 min
-
+          const CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
           const lastHistorySave = new Map();
+          const baseHeaders = { "apikey": process.env.SUPABASE_KEY, "Authorization": "Bearer " + process.env.SUPABASE_KEY, "Content-Type": "application/json" };
 
-          const baseHeaders = {
-            "apikey": process.env.SUPABASE_KEY,
-            "Authorization": "Bearer " + process.env.SUPABASE_KEY,
-            "Content-Type": "application/json"
-          };
-
-          async function upsertLatest(payload) {
-            const res = await fetch(AIS_LATEST_ENDPOINT, {
-              method: "POST",
-              headers: {
-                ...baseHeaders,
-                "Prefer": "resolution=merge-duplicates,return=minimal"
-              },
-              body: JSON.stringify(payload)
-            });
-
-            if (!res.ok) {
-              const errorText = await res.text();
-              console.log("❌ ais_latest upsert failed:", res.status, errorText, payload);
-              return false;
-            }
-
+          function numOrNull(v){ const n=Number(v); return Number.isFinite(n) && n > 0 ? n : null; }
+          function normaliseDraft(raw){ const n=Number(raw); if(!Number.isFinite(n) || n<=0) return null; return n>25 ? n/10 : n; }
+          function extractDimension(s){
+            const d = s.Dimension || s.Dimensions || {};
+            const a = numOrNull(d.A ?? d.ToBow ?? d.to_bow ?? s.DimensionToBow ?? s.ToBow);
+            const b = numOrNull(d.B ?? d.ToStern ?? d.to_stern ?? s.DimensionToStern ?? s.ToStern);
+            const c = numOrNull(d.C ?? d.ToPort ?? d.to_port ?? s.DimensionToPort ?? s.ToPort);
+            const dd = numOrNull(d.D ?? d.ToStarboard ?? d.to_starboard ?? s.DimensionToStarboard ?? s.ToStarboard);
+            return {
+              loa: (a && b) ? a + b : numOrNull(s.LOA ?? s.Length ?? s.length),
+              breadth: (c && dd) ? c + dd : numOrNull(s.Breadth ?? s.Beam ?? s.Width ?? s.beam),
+              draft: normaliseDraft(s.MaximumStaticDraught ?? s.MaximumPresentStaticDraught ?? s.Draught ?? s.Draft ?? s.draft)
+            };
+          }
+          async function postJson(endpoint, payload, prefer){
+            const res = await fetch(endpoint, { method:"POST", headers:{ ...baseHeaders, "Prefer": prefer }, body:JSON.stringify(payload) });
+            if(!res.ok){ console.log("❌ Supabase write failed:", res.status, await res.text(), payload); return false; }
             return true;
           }
-
-          async function insertHistory(payload) {
-            const res = await fetch(AIS_POSITIONS_ENDPOINT, {
-              method: "POST",
-              headers: {
-                ...baseHeaders,
-                "Prefer": "return=minimal"
-              },
-              body: JSON.stringify(payload)
-            });
-
-            if (!res.ok) {
-              const errorText = await res.text();
-              console.log("❌ ais_positions insert failed:", res.status, errorText, payload);
-              return false;
-            }
-
-            return true;
-          }
-
-          async function cleanupOldAis() {
+          async function cleanupOldAis(){
             const cutoff = new Date(Date.now() - RETENTION_HOURS * 60 * 60 * 1000).toISOString();
-
-            try {
-              const latestDelete = await fetch(
-                process.env.SUPABASE_URL + "/rest/v1/ais_latest?received_at=lt." + encodeURIComponent(cutoff),
-                {
-                  method: "DELETE",
-                  headers: {
-                    ...baseHeaders,
-                    "Prefer": "return=minimal"
-                  }
-                }
-              );
-
-              if (!latestDelete.ok) {
-                console.log("❌ ais_latest cleanup failed:", latestDelete.status, await latestDelete.text());
-              }
-
-              const positionsDelete = await fetch(
-                process.env.SUPABASE_URL + "/rest/v1/ais_positions?received_at=lt." + encodeURIComponent(cutoff),
-                {
-                  method: "DELETE",
-                  headers: {
-                    ...baseHeaders,
-                    "Prefer": "return=minimal"
-                  }
-                }
-              );
-
-              if (!positionsDelete.ok) {
-                console.log("❌ ais_positions cleanup failed:", positionsDelete.status, await positionsDelete.text());
-              }
-
-              if (latestDelete.ok && positionsDelete.ok) {
-                console.log("🧹 Cleanup completed. Deleted AIS older than", RETENTION_HOURS, "hours.");
-              }
-            } catch (err) {
-              console.log("❌ Cleanup error:", err.message);
+            for(const table of ["ais_positions", "ais_latest"]){
+              const res = await fetch(process.env.SUPABASE_URL + `/rest/v1/${table}?received_at=lt.` + encodeURIComponent(cutoff), { method:"DELETE", headers:{ ...baseHeaders, "Prefer":"return=minimal" } });
+              if(!res.ok) console.log("❌ Cleanup failed", table, res.status, await res.text());
             }
+            console.log("🧹 Cleanup completed. Retention:", RETENTION_HOURS, "hours");
           }
-
-          console.log("Connecting to AISStream...");
 
           const ws = new WebSocket("wss://stream.aisstream.io/v0/stream");
-
           ws.on("open", () => {
-            console.log("✅ Connected");
-
-            ws.send(JSON.stringify({
-              APIKey: process.env.AIS_API_KEY,
-              BoundingBoxes: [[
-                [-45, 160],
-                [-25, 180]
-              ]]
-            }));
-
-            cleanupOldAis();
-            setInterval(cleanupOldAis, CLEANUP_INTERVAL_MS);
+            console.log("✅ Connected to AISStream");
+            ws.send(JSON.stringify({ APIKey: process.env.AIS_API_KEY, BoundingBoxes: [[[-45,160],[-25,180]]] }));
+            cleanupOldAis(); setInterval(cleanupOldAis, CLEANUP_INTERVAL_MS);
           });
-
           ws.on("message", async (msg) => {
-            try {
+            try{
               const data = JSON.parse(msg.toString());
               const metaMmsi = data.MetaData?.MMSI ? Number(data.MetaData.MMSI) : null;
-
-              // 1) PositionReport: latest marker + 6h history
               const p = data.Message?.PositionReport;
-
-              if (p) {
+              if(p){
                 const mmsi = Number(p.UserID || metaMmsi);
-
-                if (!mmsi || p.Latitude === undefined || p.Longitude === undefined) {
-                  return;
-                }
-
+                if(!mmsi || p.Latitude === undefined || p.Longitude === undefined) return;
                 const nowIso = new Date().toISOString();
-                const lat = Number(p.Latitude);
-                const lon = Number(p.Longitude);
-
-                const latestPayload = {
-                  mmsi,
-                  lat,
-                  lon,
-                  sog: p.Sog !== undefined ? Number(p.Sog) : null,
-                  cog: p.Cog !== undefined ? Number(p.Cog) : null,
-                  heading: p.TrueHeading !== undefined ? Number(p.TrueHeading) : null,
-                  received_at: nowIso,
-                  updated_at: nowIso
-                };
-
-                const latestOk = await upsertLatest(latestPayload);
-
-                if (latestOk) {
-                  console.log("✅ Latest saved:", mmsi, lat, lon);
+                const payload = { mmsi, lat:Number(p.Latitude), lon:Number(p.Longitude), sog:p.Sog!==undefined?Number(p.Sog):null, cog:p.Cog!==undefined?Number(p.Cog):null, heading:p.TrueHeading!==undefined?Number(p.TrueHeading):null, received_at:nowIso, updated_at:nowIso };
+                if(await postJson(AIS_LATEST_ENDPOINT, payload, "resolution=merge-duplicates,return=minimal")) console.log("✅ Latest saved:", mmsi);
+                const nowMs=Date.now(), last=lastHistorySave.get(mmsi)||0;
+                if(nowMs-last>=HISTORY_INTERVAL_MS){
+                  const historyPayload={ mmsi, lat:payload.lat, lon:payload.lon, sog:payload.sog, cog:payload.cog, heading:payload.heading, received_at:nowIso };
+                  if(await postJson(AIS_POSITIONS_ENDPOINT, historyPayload, "return=minimal")){ lastHistorySave.set(mmsi, nowMs); console.log("📍 History saved:", mmsi); }
                 }
-
-                // Save history only once per MMSI per minute.
-                const nowMs = Date.now();
-                const lastSavedMs = lastHistorySave.get(mmsi) || 0;
-
-                if (nowMs - lastSavedMs >= HISTORY_INTERVAL_MS) {
-                  const historyPayload = {
-                    mmsi,
-                    lat,
-                    lon,
-                    sog: p.Sog !== undefined ? Number(p.Sog) : null,
-                    cog: p.Cog !== undefined ? Number(p.Cog) : null,
-                    heading: p.TrueHeading !== undefined ? Number(p.TrueHeading) : null,
-                    received_at: nowIso
-                  };
-
-                  const historyOk = await insertHistory(historyPayload);
-
-                  if (historyOk) {
-                    lastHistorySave.set(mmsi, nowMs);
-                    console.log("📍 History saved:", mmsi);
-                  }
-                }
-
                 return;
               }
-
-              // 2) ShipStaticData: vessel name / callsign / ship_type
               const s = data.Message?.ShipStaticData;
-
-              if (s) {
+              if(s){
                 const mmsi = Number(s.UserID || metaMmsi);
-
-                if (!mmsi) {
-                  return;
-                }
-
-                const name = String(s.Name || "").trim();
-                const callsign = String(s.CallSign || "").trim();
-                const nowIso = new Date().toISOString();
-
-                const staticPayload = {
-                  mmsi,
-                  name: name || null,
-                  callsign: callsign || null,
-                  ship_type: s.Type !== undefined ? Number(s.Type) : null,
-                  updated_at: nowIso
-                };
-
-                const staticOk = await upsertLatest(staticPayload);
-
-                if (staticOk) {
-                  console.log("✅ Static saved:", mmsi, name || "(no name)");
-                }
-
-                return;
+                if(!mmsi) return;
+                const dim = extractDimension(s);
+                const payload = { mmsi, name:String(s.Name||"").trim()||null, callsign:String(s.CallSign||"").trim()||null, ship_type:s.Type!==undefined?Number(s.Type):null, loa:dim.loa, breadth:dim.breadth, draft:dim.draft, updated_at:new Date().toISOString() };
+                if(await postJson(AIS_LATEST_ENDPOINT, payload, "resolution=merge-duplicates,return=minimal")) console.log("✅ Static saved:", mmsi, payload.name || "(no name)", "LOA", payload.loa, "Breadth", payload.breadth, "Draft", payload.draft);
               }
-
-              // Ignore all other AIS message types.
-            } catch (err) {
-              console.log("❌ Message error:", err.message);
-            }
+            }catch(err){ console.log("❌ Message error:", err.message); }
           });
-
-          ws.on("error", (err) => {
-            console.log("WS Error:", err.message);
-          });
-
-          ws.on("close", (code, reason) => {
-            console.log("WS Closed:", code, reason.toString());
-          });
-
-          // Keep GitHub Action alive.
-          setInterval(() => {}, 1000);
+          ws.on("error", err => console.log("WS Error:", err.message));
+          ws.on("close", (code, reason) => console.log("WS Closed:", code, reason.toString()));
+          setInterval(()=>{},1000);
           EOF
