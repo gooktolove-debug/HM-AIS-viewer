@@ -38,6 +38,7 @@ jobs:
           ws.on('open', () => {
             console.log("✅ Connected");
 
+            // ✅ NZ 전체로 넓힘 (중요!)
             ws.send(JSON.stringify({
               BoundingBoxes: [[
                 [-40, 170],
@@ -48,39 +49,46 @@ jobs:
 
           ws.on('message', async (msg) => {
             try {
-              console.log("RAW:", msg.toString());
-              
+              console.log("🔥 RAW:", msg.toString());
+
               const data = JSON.parse(msg);
+              console.log("Parsed:", JSON.stringify(data));
 
-              if (data?.Message?.PositionReport) {
-                console.log("AIS RECEIVED");
-                
-                const v = data.Message.PositionReport;
+              if (!data.Message) return;
 
-                const payload = {
-                  mmsi: v.MMSI,
-                  lat: v.Latitude,
-                  lon: v.Longitude,
-                  sog: v.Sog,
-                  cog: v.Cog,
-                  heading: v.TrueHeading || 0,
-                  received_at: new Date().toISOString()
-                };
+              let v = data.Message.PositionReport;
 
-                await fetch(process.env.SUPABASE_URL + "/rest/v1/ais_latest?on_conflict=mmsi", {
-                  method: "POST",
-                  headers: {
-                    "apikey": process.env.SUPABASE_KEY,
-                    "Content-Type": "application/json",
-                    "Prefer": "resolution=merge-duplicates"
-                  },
-                  body: JSON.stringify(payload)
-                });
-
-                console.log("Saved:", v.MMSI);
+              if (!v) {
+                console.log("No PositionReport, skip");
+                return;
               }
+
+              console.log("🚢 AIS RECEIVED:", v.MMSI);
+
+              const payload = {
+                mmsi: v.MMSI,
+                lat: v.Latitude,
+                lon: v.Longitude,
+                sog: v.Sog,
+                cog: v.Cog,
+                heading: v.TrueHeading || 0,
+                received_at: new Date().toISOString()
+              };
+
+              const res = await fetch(process.env.SUPABASE_URL + "/rest/v1/ais_latest?on_conflict=mmsi", {
+                method: "POST",
+                headers: {
+                  "apikey": process.env.SUPABASE_KEY,
+                  "Content-Type": "application/json",
+                  "Prefer": "resolution=merge-duplicates"
+                },
+                body: JSON.stringify(payload)
+              });
+
+              console.log("✅ Saved:", v.MMSI);
+
             } catch (err) {
-              console.log("Error:", err.message);
+              console.log("❌ Error:", err.message);
             }
           });
 
