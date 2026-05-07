@@ -60,8 +60,8 @@ jobs:
             ws.send(JSON.stringify({
               APIKey: process.env.AIS_API_KEY,
               BoundingBoxes: [[
-                [-45, 160],
-                [-25, 180]
+                [-38, 173],
+                [-35, 176]
               ]]
             }));
           });
