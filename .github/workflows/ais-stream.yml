@@ -27,38 +27,35 @@ jobs:
         run: |
           node <<EOF
           const WebSocket = require('ws');
-          const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+          const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 
           console.log("Connecting to AISStream...");
 
-          const ws = new WebSocket('wss://stream.aisstream.io/v0/stream', {
-            headers: {
-              Authorization: process.env.AIS_API_KEY
-            }
-          });
+          const ws = new WebSocket('wss://stream.aisstream.io/v0/stream');
 
           ws.on('open', () => {
             console.log("✅ Connected");
 
-            // 🌏 NZ 전체 범위 (확실히 데이터 나옴)
             ws.send(JSON.stringify({
               APIKey: process.env.AIS_API_KEY,
               BoundingBoxes: [[
                 [-45, 160],
-                [-25, 185]
+                [-25, 180]
               ]]
             }));
           });
 
           ws.on('message', async (msg) => {
-
-            console.log("🔥 RAW:", msg.toString());
-
             try {
-              const data = JSON.parse(msg);
-              console.log("Parsed message");
+              const raw = msg.toString();
+              console.log("🔥 RAW:", raw);
 
-              if (!data.Message) return;
+              const data = JSON.parse(raw);
+
+              if (!data.Message) {
+                console.log("Skip: no Message");
+                return;
+              }
 
               const v = data.Message.PositionReport;
 
@@ -67,17 +64,30 @@ jobs:
                 return;
               }
 
-              console.log("🚢 AIS RECEIVED:", v.MMSI);
+              // AISStream PositionReport uses UserID as MMSI.
+              const mmsi = v.UserID || data.MetaData?.MMSI;
+
+              if (!mmsi) {
+                console.log("Skip: MMSI/UserID missing");
+                return;
+              }
+
+              if (v.Latitude === undefined || v.Longitude === undefined) {
+                console.log("Skip: lat/lon missing for", mmsi);
+                return;
+              }
 
               const payload = {
-                mmsi: v.MMSI,
-                lat: v.Latitude,
-                lon: v.Longitude,
-                sog: v.Sog,
-                cog: v.Cog,
-                heading: v.TrueHeading || 0,
+                mmsi: Number(mmsi),
+                lat: Number(v.Latitude),
+                lon: Number(v.Longitude),
+                sog: v.Sog !== undefined ? Number(v.Sog) : null,
+                cog: v.Cog !== undefined ? Number(v.Cog) : null,
+                heading: v.TrueHeading !== undefined ? Number(v.TrueHeading) : null,
                 received_at: new Date().toISOString()
               };
+
+              console.log("🚢 AIS RECEIVED:", payload);
 
               const res = await fetch(
                 process.env.SUPABASE_URL + "/rest/v1/ais_latest?on_conflict=mmsi",
@@ -85,14 +95,21 @@ jobs:
                   method: "POST",
                   headers: {
                     "apikey": process.env.SUPABASE_KEY,
+                    "Authorization": "Bearer " + process.env.SUPABASE_KEY,
                     "Content-Type": "application/json",
-                    "Prefer": "resolution=merge-duplicates"
+                    "Prefer": "resolution=merge-duplicates,return=minimal"
                   },
                   body: JSON.stringify(payload)
                 }
               );
 
-              console.log("✅ Saved:", v.MMSI);
+              if (!res.ok) {
+                const errorText = await res.text();
+                console.log("❌ Supabase insert failed:", res.status, errorText);
+                return;
+              }
+
+              console.log("✅ Saved:", payload.mmsi);
 
             } catch (err) {
               console.log("❌ Error:", err.message);
@@ -103,7 +120,10 @@ jobs:
             console.log("WS Error:", err.message);
           });
 
+          ws.on('close', (code, reason) => {
+            console.log("WS Closed:", code, reason.toString());
+          });
+
           // keep running
           setInterval(() => {}, 1000);
-
           EOF
