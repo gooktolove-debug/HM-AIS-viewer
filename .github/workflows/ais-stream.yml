@@ -1,4 +1,3 @@
-
 name: AIS Stream Worker
 
 on:
@@ -29,6 +28,28 @@ jobs:
           const WebSocket = require('ws');
           const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 
+          const SUPABASE_ENDPOINT = process.env.SUPABASE_URL + "/rest/v1/ais_latest?on_conflict=mmsi";
+
+          async function upsertAis(payload) {
+            const res = await fetch(SUPABASE_ENDPOINT, {
+              method: "POST",
+              headers: {
+                "apikey": process.env.SUPABASE_KEY,
+                "Authorization": "Bearer " + process.env.SUPABASE_KEY,
+                "Content-Type": "application/json",
+                "Prefer": "resolution=merge-duplicates,return=minimal"
+              },
+              body: JSON.stringify(payload)
+            });
+
+            if (!res.ok) {
+              const errorText = await res.text();
+              console.log("❌ Supabase upsert failed:", res.status, errorText, payload);
+              return false;
+            }
+            return true;
+          }
+
           console.log("Connecting to AISStream...");
 
           const ws = new WebSocket('wss://stream.aisstream.io/v0/stream');
@@ -47,70 +68,54 @@ jobs:
 
           ws.on('message', async (msg) => {
             try {
-              const raw = msg.toString();
-              console.log("🔥 RAW:", raw);
+              const data = JSON.parse(msg.toString());
+              const metaMmsi = data.MetaData?.MMSI ? Number(data.MetaData.MMSI) : null;
 
-              const data = JSON.parse(raw);
+              // 1) Position reports: latest map position
+              const p = data.Message?.PositionReport;
+              if (p) {
+                const mmsi = Number(p.UserID || metaMmsi);
+                if (!mmsi || p.Latitude === undefined || p.Longitude === undefined) return;
 
-              if (!data.Message) {
-                console.log("Skip: no Message");
+                const payload = {
+                  mmsi,
+                  lat: Number(p.Latitude),
+                  lon: Number(p.Longitude),
+                  sog: p.Sog !== undefined ? Number(p.Sog) : null,
+                  cog: p.Cog !== undefined ? Number(p.Cog) : null,
+                  heading: p.TrueHeading !== undefined ? Number(p.TrueHeading) : null,
+                  received_at: new Date().toISOString(),
+                  updated_at: new Date().toISOString()
+                };
+
+                const ok = await upsertAis(payload);
+                if (ok) console.log("✅ Position saved:", mmsi, payload.lat, payload.lon);
                 return;
               }
 
-              const v = data.Message.PositionReport;
+              // 2) Ship static data: vessel name / callsign / type
+              const s = data.Message?.ShipStaticData;
+              if (s) {
+                const mmsi = Number(s.UserID || metaMmsi);
+                if (!mmsi) return;
 
-              if (!v) {
-                console.log("Skip non-position message");
+                const name = String(s.Name || '').trim();
+                const callsign = String(s.CallSign || '').trim();
+
+                const payload = {
+                  mmsi,
+                  name: name || null,
+                  callsign: callsign || null,
+                  ship_type: s.Type !== undefined ? Number(s.Type) : null,
+                  updated_at: new Date().toISOString()
+                };
+
+                const ok = await upsertAis(payload);
+                if (ok) console.log("✅ Static saved:", mmsi, name || '(no name)');
                 return;
               }
 
-              // AISStream PositionReport uses UserID as MMSI.
-              const mmsi = v.UserID || data.MetaData?.MMSI;
-
-              if (!mmsi) {
-                console.log("Skip: MMSI/UserID missing");
-                return;
-              }
-
-              if (v.Latitude === undefined || v.Longitude === undefined) {
-                console.log("Skip: lat/lon missing for", mmsi);
-                return;
-              }
-
-              const payload = {
-                mmsi: Number(mmsi),
-                lat: Number(v.Latitude),
-                lon: Number(v.Longitude),
-                sog: v.Sog !== undefined ? Number(v.Sog) : null,
-                cog: v.Cog !== undefined ? Number(v.Cog) : null,
-                heading: v.TrueHeading !== undefined ? Number(v.TrueHeading) : null,
-                received_at: new Date().toISOString()
-              };
-
-              console.log("🚢 AIS RECEIVED:", payload);
-
-              const res = await fetch(
-                process.env.SUPABASE_URL + "/rest/v1/ais_latest?on_conflict=mmsi",
-                {
-                  method: "POST",
-                  headers: {
-                    "apikey": process.env.SUPABASE_KEY,
-                    "Authorization": "Bearer " + process.env.SUPABASE_KEY,
-                    "Content-Type": "application/json",
-                    "Prefer": "resolution=merge-duplicates,return=minimal"
-                  },
-                  body: JSON.stringify(payload)
-                }
-              );
-
-              if (!res.ok) {
-                const errorText = await res.text();
-                console.log("❌ Supabase insert failed:", res.status, errorText);
-                return;
-              }
-
-              console.log("✅ Saved:", payload.mmsi);
-
+              // Other AIS message types are ignored for now.
             } catch (err) {
               console.log("❌ Error:", err.message);
             }
@@ -124,6 +129,5 @@ jobs:
             console.log("WS Closed:", code, reason.toString());
           });
 
-          // keep running
           setInterval(() => {}, 1000);
           EOF
