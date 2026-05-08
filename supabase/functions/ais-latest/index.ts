@@ -1,7 +1,7 @@
 // supabase/functions/ais-latest/index.ts
-// Current-only map markers + recent 6h tracks for displayed vessels.
-// Map markers: only vessels with a recent ais_latest.received_at within latestMinutes.
-// Tracks: only for displayed vessels, from ais_positions within trackMinutes.
+// Current map markers + recent 6h tracks.
+// Map markers: vessels with ais_latest.received_at within latestMinutes.
+// Tracks: recent ais_positions for the vessels currently displayed.
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -37,10 +37,12 @@ Deno.serve(async (req: Request) => {
     const lonMin = numberParam(url, "lonMin", 174.66);
     const lonMax = numberParam(url, "lonMax", 174.95);
 
-    // Important separation:
-    // latestMinutes controls what appears on the MAP now.
-    // trackMinutes controls how far back the track line can go for those displayed vessels.
-    const latestMinutes = numberParam(url, "latestMinutes", 10);
+    // Display window for CURRENT map markers.
+    // 10 minutes was too strict for AISStream / static harbour traffic,
+    // so 60 minutes keeps currently relevant vessels without showing stale 700+ min records.
+    const latestMinutes = numberParam(url, "latestMinutes", 60);
+
+    // Track window for displayed vessels.
     const trackMinutes = numberParam(url, "trackMinutes", numberParam(url, "minutes", 360));
 
     const latestSince = new Date(Date.now() - latestMinutes * 60 * 1000).toISOString();
@@ -59,7 +61,7 @@ Deno.serve(async (req: Request) => {
       "Accept": "application/json",
     };
 
-    // 1) Latest/current vessels only.
+    // 1) Current/latest vessels for map markers.
     const latestUrl = new URL(`${supabaseUrl}/rest/v1/ais_latest`);
     latestUrl.searchParams.set("select", "mmsi,name,callsign,ship_type,loa,breadth,draft,lat,lon,sog,cog,heading,received_at,updated_at");
     latestUrl.searchParams.set("lat", `gte.${latMin}`);
@@ -71,13 +73,13 @@ Deno.serve(async (req: Request) => {
     latestUrl.searchParams.set("limit", "1000");
 
     const latestRes = await fetch(latestUrl.toString(), { method: "GET", headers });
-
     if (!latestRes.ok) {
       return jsonResponse({
         ok: false,
         error: "Failed to read ais_latest.",
         status: latestRes.status,
         details: await latestRes.text(),
+        latestSince,
       }, 500);
     }
 
@@ -104,7 +106,7 @@ Deno.serve(async (req: Request) => {
       source: "AISStream",
     }));
 
-    // 2) Tracks only for vessels currently displayed.
+    // 2) Tracks only for vessels that are currently displayed.
     const tracks: Record<string, number[][]> = {};
     const mmsis = vessels.map((v: any) => Number(v.mmsi)).filter((m: number) => Number.isFinite(m));
 
@@ -117,13 +119,13 @@ Deno.serve(async (req: Request) => {
       trackUrl.searchParams.set("limit", "10000");
 
       const trackRes = await fetch(trackUrl.toString(), { method: "GET", headers });
-
       if (!trackRes.ok) {
         return jsonResponse({
           ok: false,
           error: "Failed to read ais_positions.",
           status: trackRes.status,
           details: await trackRes.text(),
+          trackSince,
         }, 500);
       }
 
@@ -132,14 +134,16 @@ Deno.serve(async (req: Request) => {
       for (const row of trackRows) {
         const key = String(row.mmsi);
         if (!tracks[key]) tracks[key] = [];
+
         const lat = Number(row.lat);
         const lon = Number(row.lon);
+
         if (Number.isFinite(lat) && Number.isFinite(lon)) {
           tracks[key].push([lat, lon]);
         }
       }
 
-      // Fallback: if a displayed vessel has no history yet, use its latest point.
+      // Fallback: if a displayed vessel has no history yet, use the latest point.
       for (const vessel of vessels) {
         const key = String(vessel.mmsi);
         if (!tracks[key] || tracks[key].length === 0) {
@@ -154,6 +158,8 @@ Deno.serve(async (req: Request) => {
       count: vessels.length,
       latestWindowMinutes: latestMinutes,
       trackWindowMinutes: trackMinutes,
+      latestSince,
+      trackSince,
       bounds: { latMin, latMax, lonMin, lonMax },
       vessels,
       tracks,
