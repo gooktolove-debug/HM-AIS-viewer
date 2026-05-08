@@ -1,7 +1,9 @@
 // supabase/functions/ais-latest/index.ts
-// Current map markers + recent 6h tracks.
-// Map markers: vessels with ais_latest.received_at within latestMinutes.
-// Tracks: recent ais_positions for the vessels currently displayed.
+// v18: Current map markers are calculated from ais_positions, not ais_latest.
+// This fixes the case where ais_positions is updating but ais_latest is stale.
+// - Map markers: latest ais_positions point per MMSI within latestMinutes.
+// - Tracks: ais_positions points within trackMinutes for displayed vessels.
+// - Static info: optional enrichment from ais_latest (name, callsign, dimensions).
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -25,6 +27,12 @@ function numberParam(url: URL, name: string, fallback: number): number {
   return Number.isFinite(value) ? value : fallback;
 }
 
+function ageMinutes(iso: string): number {
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return 999999;
+  return Math.max(0, Math.round((Date.now() - t) / 60000));
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "GET") return jsonResponse({ ok: false, error: "Method not allowed" }, 405);
@@ -37,12 +45,8 @@ Deno.serve(async (req: Request) => {
     const lonMin = numberParam(url, "lonMin", 174.66);
     const lonMax = numberParam(url, "lonMax", 174.95);
 
-    // Display window for CURRENT map markers.
-    // 10 minutes was too strict for AISStream / static harbour traffic,
-    // so 60 minutes keeps currently relevant vessels without showing stale 700+ min records.
+    // Current marker window and track window are deliberately separate.
     const latestMinutes = numberParam(url, "latestMinutes", 60);
-
-    // Track window for displayed vessels.
     const trackMinutes = numberParam(url, "trackMinutes", numberParam(url, "minutes", 360));
 
     const latestSince = new Date(Date.now() - latestMinutes * 60 * 1000).toISOString();
@@ -61,100 +65,117 @@ Deno.serve(async (req: Request) => {
       "Accept": "application/json",
     };
 
-    // 1) Current/latest vessels for map markers.
-    const latestUrl = new URL(`${supabaseUrl}/rest/v1/ais_latest`);
-    latestUrl.searchParams.set("select", "mmsi,name,callsign,ship_type,loa,breadth,draft,lat,lon,sog,cog,heading,received_at,updated_at");
-    latestUrl.searchParams.set("lat", `gte.${latMin}`);
-    latestUrl.searchParams.append("lat", `lte.${latMax}`);
-    latestUrl.searchParams.set("lon", `gte.${lonMin}`);
-    latestUrl.searchParams.append("lon", `lte.${lonMax}`);
-    latestUrl.searchParams.set("received_at", `gte.${latestSince}`);
-    latestUrl.searchParams.set("order", "received_at.desc");
-    latestUrl.searchParams.set("limit", "1000");
+    // 1) Read recent position history from ais_positions.
+    // This table is confirmed to be updating, so it becomes the source of truth for current map markers.
+    const posUrl = new URL(`${supabaseUrl}/rest/v1/ais_positions`);
+    posUrl.searchParams.set("select", "mmsi,lat,lon,sog,cog,heading,received_at");
+    posUrl.searchParams.set("lat", `gte.${latMin}`);
+    posUrl.searchParams.append("lat", `lte.${latMax}`);
+    posUrl.searchParams.set("lon", `gte.${lonMin}`);
+    posUrl.searchParams.append("lon", `lte.${lonMax}`);
+    posUrl.searchParams.set("received_at", `gte.${trackSince}`);
+    posUrl.searchParams.set("order", "mmsi.asc,received_at.asc");
+    posUrl.searchParams.set("limit", "20000");
 
-    const latestRes = await fetch(latestUrl.toString(), { method: "GET", headers });
-    if (!latestRes.ok) {
+    const posRes = await fetch(posUrl.toString(), { method: "GET", headers });
+    if (!posRes.ok) {
       return jsonResponse({
         ok: false,
-        error: "Failed to read ais_latest.",
-        status: latestRes.status,
-        details: await latestRes.text(),
-        latestSince,
+        error: "Failed to read ais_positions.",
+        status: posRes.status,
+        details: await posRes.text(),
+        query: posUrl.toString(),
       }, 500);
     }
 
-    const latestRows = await latestRes.json();
+    const posRows = await posRes.json();
 
-    const vessels = latestRows.map((row: any) => ({
-      mmsi: row.mmsi,
-      imo: 0,
-      name: row.name && String(row.name).trim() ? String(row.name).trim() : `MMSI ${row.mmsi}`,
-      callsign: row.callsign || "",
-      type: "Other",
-      loa: row.loa,
-      breadth: row.breadth,
-      draft: row.draft,
-      lat: row.lat,
-      lon: row.lon,
-      sog: row.sog,
-      cog: row.cog,
-      heading: row.heading,
-      navStatus: "",
-      destination: "",
-      eta: "",
-      received_at: row.received_at,
-      source: "AISStream",
-    }));
-
-    // 2) Tracks only for vessels that are currently displayed.
     const tracks: Record<string, number[][]> = {};
-    const mmsis = vessels.map((v: any) => Number(v.mmsi)).filter((m: number) => Number.isFinite(m));
+    const latestByMmsi = new Map<number, any>();
 
+    for (const row of posRows) {
+      const mmsi = Number(row.mmsi);
+      const lat = Number(row.lat);
+      const lon = Number(row.lon);
+      if (!Number.isFinite(mmsi) || !Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+      if (lat < -90 || lat > 90 || lon < -180 || lon > 180) continue;
+
+      const key = String(mmsi);
+      if (!tracks[key]) tracks[key] = [];
+      tracks[key].push([lat, lon]);
+
+      // Rows are ordered by mmsi asc, received_at asc, so later rows overwrite older rows.
+      latestByMmsi.set(mmsi, row);
+    }
+
+    // Only display current/recent vessels on the map.
+    const latestRows = Array.from(latestByMmsi.values()).filter((row: any) => {
+      return new Date(row.received_at).getTime() >= new Date(latestSince).getTime();
+    });
+
+    const mmsis = latestRows.map((row: any) => Number(row.mmsi)).filter((m: number) => Number.isFinite(m));
+
+    // 2) Optional static enrichment from ais_latest.
+    const staticByMmsi = new Map<number, any>();
     if (mmsis.length > 0) {
-      const trackUrl = new URL(`${supabaseUrl}/rest/v1/ais_positions`);
-      trackUrl.searchParams.set("select", "mmsi,lat,lon,received_at");
-      trackUrl.searchParams.set("mmsi", `in.(${mmsis.join(",")})`);
-      trackUrl.searchParams.set("received_at", `gte.${trackSince}`);
-      trackUrl.searchParams.set("order", "mmsi.asc,received_at.asc");
-      trackUrl.searchParams.set("limit", "10000");
+      const staticUrl = new URL(`${supabaseUrl}/rest/v1/ais_latest`);
+      staticUrl.searchParams.set("select", "mmsi,name,callsign,ship_type,loa,breadth,draft,updated_at");
+      staticUrl.searchParams.set("mmsi", `in.(${mmsis.join(",")})`);
+      staticUrl.searchParams.set("limit", "1000");
 
-      const trackRes = await fetch(trackUrl.toString(), { method: "GET", headers });
-      if (!trackRes.ok) {
-        return jsonResponse({
-          ok: false,
-          error: "Failed to read ais_positions.",
-          status: trackRes.status,
-          details: await trackRes.text(),
-          trackSince,
-        }, 500);
-      }
-
-      const trackRows = await trackRes.json();
-
-      for (const row of trackRows) {
-        const key = String(row.mmsi);
-        if (!tracks[key]) tracks[key] = [];
-
-        const lat = Number(row.lat);
-        const lon = Number(row.lon);
-
-        if (Number.isFinite(lat) && Number.isFinite(lon)) {
-          tracks[key].push([lat, lon]);
+      const staticRes = await fetch(staticUrl.toString(), { method: "GET", headers });
+      if (staticRes.ok) {
+        const staticRows = await staticRes.json();
+        for (const row of staticRows) {
+          staticByMmsi.set(Number(row.mmsi), row);
         }
       }
+    }
 
-      // Fallback: if a displayed vessel has no history yet, use the latest point.
-      for (const vessel of vessels) {
-        const key = String(vessel.mmsi);
-        if (!tracks[key] || tracks[key].length === 0) {
-          tracks[key] = [[Number(vessel.lat), Number(vessel.lon)]];
-        }
+    const vessels = latestRows.map((row: any) => {
+      const mmsi = Number(row.mmsi);
+      const s = staticByMmsi.get(mmsi) || {};
+      return {
+        mmsi,
+        imo: 0,
+        name: s.name && String(s.name).trim() ? String(s.name).trim() : `MMSI ${mmsi}`,
+        callsign: s.callsign || "",
+        type: "Other",
+        loa: s.loa,
+        breadth: s.breadth,
+        draft: s.draft,
+        lat: Number(row.lat),
+        lon: Number(row.lon),
+        sog: row.sog,
+        cog: row.cog,
+        heading: row.heading,
+        navStatus: "",
+        destination: "",
+        eta: "",
+        received_at: row.received_at,
+        lastSeenMin: ageMinutes(row.received_at),
+        source: "AISStream / ais_positions",
+      };
+    });
+
+    // Remove tracks for vessels that are not displayed.
+    const displayed = new Set(vessels.map((v: any) => String(v.mmsi)));
+    for (const key of Object.keys(tracks)) {
+      if (!displayed.has(key)) delete tracks[key];
+    }
+
+    // Fallback one-point tracks for displayed vessels without any track rows.
+    for (const vessel of vessels) {
+      const key = String(vessel.mmsi);
+      if (!tracks[key] || tracks[key].length === 0) {
+        tracks[key] = [[Number(vessel.lat), Number(vessel.lon)]];
       }
     }
 
     return jsonResponse({
       ok: true,
       provider: "AISStream via Supabase",
+      sourceTable: "ais_positions",
       count: vessels.length,
       latestWindowMinutes: latestMinutes,
       trackWindowMinutes: trackMinutes,
