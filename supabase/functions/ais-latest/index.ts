@@ -1,9 +1,8 @@
 // supabase/functions/ais-latest/index.ts
-// v18: Current map markers are calculated from ais_positions, not ais_latest.
-// This fixes the case where ais_positions is updating but ais_latest is stale.
-// - Map markers: latest ais_positions point per MMSI within latestMinutes.
-// - Tracks: ais_positions points within trackMinutes for displayed vessels.
-// - Static info: optional enrichment from ais_latest (name, callsign, dimensions).
+// v19: Source of truth for positions is public.ais_positions.
+// - Map markers: one latest row per MMSI from ais_positions within latestMinutes.
+// - Track lines: all rows from ais_positions within trackMinutes for the displayed MMSIs.
+// - Static metadata: enriched from ais_latest when available.
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -11,7 +10,7 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "GET, OPTIONS",
 };
 
-function jsonResponse(body: unknown, status = 200) {
+function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body, null, 2), {
     status,
     headers: {
@@ -22,18 +21,18 @@ function jsonResponse(body: unknown, status = 200) {
   });
 }
 
-function numberParam(url: URL, name: string, fallback: number): number {
+function numberParam(url, name, fallback) {
   const value = Number(url.searchParams.get(name));
   return Number.isFinite(value) ? value : fallback;
 }
 
-function ageMinutes(iso: string): number {
+function ageMinutes(iso) {
   const t = new Date(iso).getTime();
   if (!Number.isFinite(t)) return 999999;
   return Math.max(0, Math.round((Date.now() - t) / 60000));
 }
 
-Deno.serve(async (req: Request) => {
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "GET") return jsonResponse({ ok: false, error: "Method not allowed" }, 405);
 
@@ -45,8 +44,11 @@ Deno.serve(async (req: Request) => {
     const lonMin = numberParam(url, "lonMin", 174.66);
     const lonMax = numberParam(url, "lonMax", 174.95);
 
-    // Current marker window and track window are deliberately separate.
-    const latestMinutes = numberParam(url, "latestMinutes", 60);
+    // Display latest marker per MMSI from ais_positions.
+    // Default 360 min is intentionally aligned with the 6h retention so the map does not go empty
+    // while AISStream/GitHub worker timing is being tuned.
+    // Later you can reduce this to 60 or 30 if desired.
+    const latestMinutes = numberParam(url, "latestMinutes", 360);
     const trackMinutes = numberParam(url, "trackMinutes", numberParam(url, "minutes", 360));
 
     const latestSince = new Date(Date.now() - latestMinutes * 60 * 1000).toISOString();
@@ -65,8 +67,7 @@ Deno.serve(async (req: Request) => {
       "Accept": "application/json",
     };
 
-    // 1) Read recent position history from ais_positions.
-    // This table is confirmed to be updating, so it becomes the source of truth for current map markers.
+    // Read AIS positions in the requested map bounds within the track window.
     const posUrl = new URL(`${supabaseUrl}/rest/v1/ais_positions`);
     posUrl.searchParams.set("select", "mmsi,lat,lon,sog,cog,heading,received_at");
     posUrl.searchParams.set("lat", `gte.${latMin}`);
@@ -90,8 +91,8 @@ Deno.serve(async (req: Request) => {
 
     const posRows = await posRes.json();
 
-    const tracks: Record<string, number[][]> = {};
-    const latestByMmsi = new Map<number, any>();
+    const tracks = {};
+    const latestByMmsi = new Map();
 
     for (const row of posRows) {
       const mmsi = Number(row.mmsi);
@@ -104,19 +105,20 @@ Deno.serve(async (req: Request) => {
       if (!tracks[key]) tracks[key] = [];
       tracks[key].push([lat, lon]);
 
-      // Rows are ordered by mmsi asc, received_at asc, so later rows overwrite older rows.
+      // Query order is by mmsi asc, received_at asc, so the latest row overwrites older rows.
       latestByMmsi.set(mmsi, row);
     }
 
-    // Only display current/recent vessels on the map.
-    const latestRows = Array.from(latestByMmsi.values()).filter((row: any) => {
-      return new Date(row.received_at).getTime() >= new Date(latestSince).getTime();
+    // Current map markers are latest rows per MMSI within latestMinutes.
+    const latestCutoffMs = new Date(latestSince).getTime();
+    const currentRows = Array.from(latestByMmsi.values()).filter((row) => {
+      return new Date(row.received_at).getTime() >= latestCutoffMs;
     });
 
-    const mmsis = latestRows.map((row: any) => Number(row.mmsi)).filter((m: number) => Number.isFinite(m));
+    const mmsis = currentRows.map((row) => Number(row.mmsi)).filter((m) => Number.isFinite(m));
 
-    // 2) Optional static enrichment from ais_latest.
-    const staticByMmsi = new Map<number, any>();
+    // Optional metadata enrichment from ais_latest.
+    const staticByMmsi = new Map();
     if (mmsis.length > 0) {
       const staticUrl = new URL(`${supabaseUrl}/rest/v1/ais_latest`);
       staticUrl.searchParams.set("select", "mmsi,name,callsign,ship_type,loa,breadth,draft,updated_at");
@@ -126,13 +128,11 @@ Deno.serve(async (req: Request) => {
       const staticRes = await fetch(staticUrl.toString(), { method: "GET", headers });
       if (staticRes.ok) {
         const staticRows = await staticRes.json();
-        for (const row of staticRows) {
-          staticByMmsi.set(Number(row.mmsi), row);
-        }
+        for (const row of staticRows) staticByMmsi.set(Number(row.mmsi), row);
       }
     }
 
-    const vessels = latestRows.map((row: any) => {
+    const vessels = currentRows.map((row) => {
       const mmsi = Number(row.mmsi);
       const s = staticByMmsi.get(mmsi) || {};
       return {
@@ -154,17 +154,16 @@ Deno.serve(async (req: Request) => {
         eta: "",
         received_at: row.received_at,
         lastSeenMin: ageMinutes(row.received_at),
-        source: "AISStream / ais_positions",
+        source: "ais_positions",
       };
     });
 
-    // Remove tracks for vessels that are not displayed.
-    const displayed = new Set(vessels.map((v: any) => String(v.mmsi)));
+    // Return only tracks for currently displayed vessels.
+    const displayed = new Set(vessels.map((v) => String(v.mmsi)));
     for (const key of Object.keys(tracks)) {
       if (!displayed.has(key)) delete tracks[key];
     }
 
-    // Fallback one-point tracks for displayed vessels without any track rows.
     for (const vessel of vessels) {
       const key = String(vessel.mmsi);
       if (!tracks[key] || tracks[key].length === 0) {
