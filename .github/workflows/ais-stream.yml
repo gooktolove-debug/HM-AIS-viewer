@@ -4,187 +4,7 @@ name: AIS Stream Worker
 on:
   workflow_dispatch:
 
- d.to_stern ?? s.DimensionToStern ?? s.ToStern);jobs:
-            const c = numOrNull(d.C ?? d.ToPort ?? d.to_port ?? s.DimensionToPort ?? s.ToPort);
-            const dd = numOrNull(d.D ?? d.ToStarboard ?? d.to_starboard ?? s.DimensionToStarboard ?? s.ToStarboard);
-
-            return {
-              loa: (a && b) ? a + b : numOrNull(s.LOA ?? s.Length ?? s.length),
-              breadth: (c && dd) ? c + dd : numOrNull(s.Breadth ?? s.Beam ?? s.Width ?? s.beam),
-              draft: normaliseDraft(s.MaximumStaticDraught ?? s.MaximumPresentStaticDraught ?? s.Draught ?? s.Draft ?? s.draft)
-            };
-          }
-
-          async function postJson(endpoint, payload, prefer) {
-            const res = await fetch(endpoint, {
-              method: "POST",
-              headers: {
-                ...baseHeaders,
-                "Prefer": prefer
-              },
-              body: JSON.stringify(payload)
-            });
-
-            if (!res.ok) {
-              console.log("❌ Supabase write failed:", res.status, await res.text(), payload);
-              return false;
-            }
-
-            return true;
-          }
-
-          async function cleanupOldAis() {
-            const cutoff = new Date(Date.now() - RETENTION_HOURS * 60 * 60 * 1000).toISOString();
-
-            const tables = ["ais_positions", "ais_latest"];
-
-            for (const table of tables) {
-              const endpoint =
-                SUPABASE_URL +
-                "/rest/v1/" +
-                table +
-                "?received_at=lt." +
-                encodeURIComponent(cutoff);
-
-              const res = await fetch(endpoint, {
-                method: "DELETE",
-                headers: {
-                  ...baseHeaders,
-                  "Prefer": "return=minimal"
-                }
-              });
-
-              if (!res.ok) {
-                console.log("❌ Cleanup failed:", table, res.status, await res.text());
-              }
-            }
-
-            console.log("🧹 Cleanup completed. Retention:", RETENTION_HOURS, "hours");
-          }
-
-          console.log("SUPABASE_URL:", SUPABASE_URL);
-          console.log("Connecting to AISStream...");
-
-          const ws = new WebSocket("wss://stream.aisstream.io/v0/stream");
-
-          ws.on("open", () => {
-            console.log("✅ Connected to AISStream");
-
-            ws.send(JSON.stringify({
-              APIKey: AIS_API_KEY,
-              BoundingBoxes: [[
-                [-45, 160],
-                [-25, 180]
-              ]]
-            }));
-
-            cleanupOldAis();
-            setInterval(cleanupOldAis, CLEANUP_INTERVAL_MS);
-          });
-
-          ws.on("message", async (msg) => {
-            try {
-              const data = JSON.parse(msg.toString());
-              const metaMmsi = data.MetaData?.MMSI ? Number(data.MetaData.MMSI) : null;
-
-              const p = data.Message?.PositionReport;
-
-              if (p) {
-                const mmsi = Number(p.UserID || metaMmsi);
-
-                if (!mmsi || p.Latitude === undefined || p.Longitude === undefined) {
-                  return;
-                }
-
-                const nowIso = new Date().toISOString();
-
-                const latestPayload = {
-                  mmsi,
-                  lat: Number(p.Latitude),
-                  lon: Number(p.Longitude),
-                  sog: p.Sog !== undefined ? Number(p.Sog) : null,
-                  cog: p.Cog !== undefined ? Number(p.Cog) : null,
-                  heading: p.TrueHeading !== undefined ? Number(p.TrueHeading) : null,
-                  received_at: nowIso,
-                  updated_at: nowIso
-                };
-
-                if (await postJson(AIS_LATEST_ENDPOINT, latestPayload, "resolution=merge-duplicates,return=minimal")) {
-                  console.log("✅ Latest saved:", mmsi);
-                }
-
-                const nowMs = Date.now();
-                const lastSavedMs = lastHistorySave.get(mmsi) || 0;
-
-                if (nowMs - lastSavedMs >= HISTORY_INTERVAL_MS) {
-                  const historyPayload = {
-                    mmsi,
-                    lat: latestPayload.lat,
-                    lon: latestPayload.lon,
-                    sog: latestPayload.sog,
-                    cog: latestPayload.cog,
-                    heading: latestPayload.heading,
-                    received_at: nowIso
-                  };
-
-                  if (await postJson(AIS_POSITIONS_ENDPOINT, historyPayload, "return=minimal")) {
-                    lastHistorySave.set(mmsi, nowMs);
-                    console.log("📍 History saved:", mmsi);
-                  }
-                }
-
-                return;
-              }
-
-              const s = data.Message?.ShipStaticData;
-
-              if (s) {
-                const mmsi = Number(s.UserID || metaMmsi);
-
-                if (!mmsi) return;
-
-                const dim = extractDimension(s);
-
-                const staticPayload = {
-                  mmsi,
-                  name: String(s.Name || "").trim() || null,
-                  callsign: String(s.CallSign || "").trim() || null,
-                  ship_type: s.Type !== undefined ? Number(s.Type) : null,
-                  loa: dim.loa,
-                  breadth: dim.breadth,
-                  draft: dim.draft,
-                  updated_at: new Date().toISOString()
-                };
-
-                if (await postJson(AIS_LATEST_ENDPOINT, staticPayload, "resolution=merge-duplicates,return=minimal")) {
-                  console.log(
-                    "✅ Static saved:",
-                    mmsi,
-                    staticPayload.name || "(no name)",
-                    "LOA", staticPayload.loa,
-                    "Breadth", staticPayload.breadth,
-                    "Draft", staticPayload.draft
-                  );
-                }
-
-                return;
-              }
-
-            } catch (err) {
-              console.log("❌ Message error:", err.message);
-            }
-          });
-
-          ws.on("error", (err) => {
-            console.log("WS Error:", err.message);
-          });
-
-          ws.on("close", (code, reason) => {
-            console.log("WS Closed:", code, reason.toString());
-          });
-
-          setInterval(() => {}, 1000);
-          EOF
+jobs:
   stream:
     runs-on: ubuntu-latest
     timeout-minutes: 360
@@ -228,18 +48,264 @@ on:
             "Content-Type": "application/json"
           };
 
-          function numOrNull(v) {
-            const n = Number(v);
+          function numOrNull(value) {
+            const n = Number(value);
             return Number.isFinite(n) && n > 0 ? n : null;
           }
 
           function normaliseDraft(raw) {
             const n = Number(raw);
             if (!Number.isFinite(n) || n <= 0) return null;
+
+            // Some feeds provide draught in decimetres.
+            // If the value is unusually high for metres, convert to metres.
             return n > 25 ? n / 10 : n;
           }
 
-          function extractDimension(s) {
-            const d = s.Dimension || s.Dimensions || {};
+          function extractDimension(staticData) {
+            const d = staticData.Dimension || staticData.Dimensions || {};
 
-            const a = numOrNull(d.A ?? d.ToBow ?? d.to_bow ?? s.DimensionToBow ?? s.ToBow);
+            const toBow = numOrNull(
+              d.A ??
+              d.ToBow ??
+              d.to_bow ??
+              staticData.DimensionToBow ??
+              staticData.ToBow
+            );
+
+            const toStern = numOrNull(
+              d.B ??
+              d.ToStern ??
+              d.to_stern ??
+              staticData.DimensionToStern ??
+              staticData.ToStern
+            );
+
+            const toPort = numOrNull(
+              d.C ??
+              d.ToPort ??
+              d.to_port ??
+              staticData.DimensionToPort ??
+              staticData.ToPort
+            );
+
+            const toStarboard = numOrNull(
+              d.D ??
+              d.ToStarboard ??
+              d.to_starboard ??
+              staticData.DimensionToStarboard ??
+              staticData.ToStarboard
+            );
+
+            const loa =
+              toBow && toStern
+                ? toBow + toStern
+                : numOrNull(staticData.LOA ?? staticData.Length ?? staticData.length);
+
+            const breadth =
+              toPort && toStarboard
+                ? toPort + toStarboard
+                : numOrNull(staticData.Breadth ?? staticData.Beam ?? staticData.Width ?? staticData.beam);
+
+            const draft = normaliseDraft(
+              staticData.MaximumStaticDraught ??
+              staticData.MaximumPresentStaticDraught ??
+              staticData.Draught ??
+              staticData.Draft ??
+              staticData.draft
+            );
+
+            return { loa, breadth, draft };
+          }
+
+          async function postJson(endpoint, payload, prefer) {
+            const res = await fetch(endpoint, {
+              method: "POST",
+              headers: {
+                ...baseHeaders,
+                "Prefer": prefer
+              },
+              body: JSON.stringify(payload)
+            });
+
+            if (!res.ok) {
+              console.log("Supabase write failed:", res.status, await res.text(), payload);
+              return false;
+            }
+
+            return true;
+          }
+
+          async function cleanupOldAis() {
+            const cutoff = new Date(Date.now() - RETENTION_HOURS * 60 * 60 * 1000).toISOString();
+            const tables = ["ais_positions", "ais_latest"];
+
+            for (const table of tables) {
+              const endpoint =
+                SUPABASE_URL +
+                "/rest/v1/" +
+                table +
+                "?received_at=lt." +
+                encodeURIComponent(cutoff);
+
+              const res = await fetch(endpoint, {
+                method: "DELETE",
+                headers: {
+                  ...baseHeaders,
+                  "Prefer": "return=minimal"
+                }
+              });
+
+              if (!res.ok) {
+                console.log("Cleanup failed:", table, res.status, await res.text());
+              }
+            }
+
+            console.log("Cleanup completed. Retention:", RETENTION_HOURS, "hours");
+          }
+
+          console.log("SUPABASE_URL:", SUPABASE_URL);
+          console.log("Connecting to AISStream...");
+
+          const ws = new WebSocket("wss://stream.aisstream.io/v0/stream");
+
+          ws.on("open", () => {
+            console.log("Connected to AISStream");
+
+            ws.send(JSON.stringify({
+              APIKey: AIS_API_KEY,
+              BoundingBoxes: [[
+                [-45, 160],
+                [-25, 180]
+              ]]
+            }));
+
+            cleanupOldAis();
+            setInterval(cleanupOldAis, CLEANUP_INTERVAL_MS);
+          });
+
+          ws.on("message", async (msg) => {
+            try {
+              const data = JSON.parse(msg.toString());
+              const metaMmsi = data.MetaData && data.MetaData.MMSI
+                ? Number(data.MetaData.MMSI)
+                : null;
+
+              const position = data.Message && data.Message.PositionReport;
+
+              if (position) {
+                const mmsi = Number(position.UserID || metaMmsi);
+
+                if (!mmsi || position.Latitude === undefined || position.Longitude === undefined) {
+                  return;
+                }
+
+                const nowIso = new Date().toISOString();
+
+                const latestPayload = {
+                  mmsi,
+                  lat: Number(position.Latitude),
+                  lon: Number(position.Longitude),
+                  sog: position.Sog !== undefined ? Number(position.Sog) : null,
+                  cog: position.Cog !== undefined ? Number(position.Cog) : null,
+                  heading: position.TrueHeading !== undefined ? Number(position.TrueHeading) : null,
+                  received_at: nowIso,
+                  updated_at: nowIso
+                };
+
+                const latestSaved = await postJson(
+                  AIS_LATEST_ENDPOINT,
+                  latestPayload,
+                  "resolution=merge-duplicates,return=minimal"
+                );
+
+                if (latestSaved) {
+                  console.log("Latest saved:", mmsi);
+                }
+
+                const nowMs = Date.now();
+                const lastSavedMs = lastHistorySave.get(mmsi) || 0;
+
+                if (nowMs - lastSavedMs >= HISTORY_INTERVAL_MS) {
+                  const historyPayload = {
+                    mmsi,
+                    lat: latestPayload.lat,
+                    lon: latestPayload.lon,
+                    sog: latestPayload.sog,
+                    cog: latestPayload.cog,
+                    heading: latestPayload.heading,
+                    received_at: nowIso
+                  };
+
+                  const historySaved = await postJson(
+                    AIS_POSITIONS_ENDPOINT,
+                    historyPayload,
+                    "return=minimal"
+                  );
+
+                  if (historySaved) {
+                    lastHistorySave.set(mmsi, nowMs);
+                    console.log("History saved:", mmsi);
+                  }
+                }
+
+                return;
+              }
+
+              const staticData = data.Message && data.Message.ShipStaticData;
+
+              if (staticData) {
+                const mmsi = Number(staticData.UserID || metaMmsi);
+
+                if (!mmsi) return;
+
+                const dimensions = extractDimension(staticData);
+
+                const staticPayload = {
+                  mmsi,
+                  name: String(staticData.Name || "").trim() || null,
+                  callsign: String(staticData.CallSign || "").trim() || null,
+                  ship_type: staticData.Type !== undefined ? Number(staticData.Type) : null,
+                  loa: dimensions.loa,
+                  breadth: dimensions.breadth,
+                  draft: dimensions.draft,
+                  updated_at: new Date().toISOString()
+                };
+
+                const staticSaved = await postJson(
+                  AIS_LATEST_ENDPOINT,
+                  staticPayload,
+                  "resolution=merge-duplicates,return=minimal"
+                );
+
+                if (staticSaved) {
+                  console.log(
+                    "Static saved:",
+                    mmsi,
+                    staticPayload.name || "(no name)",
+                    "LOA",
+                    staticPayload.loa,
+                    "Breadth",
+                    staticPayload.breadth,
+                    "Draft",
+                    staticPayload.draft
+                  );
+                }
+
+                return;
+              }
+            } catch (err) {
+              console.log("Message error:", err.message);
+            }
+          });
+
+          ws.on("error", (err) => {
+            console.log("WS Error:", err.message);
+          });
+
+          ws.on("close", (code, reason) => {
+            console.log("WS Closed:", code, reason.toString());
+          });
+
+          setInterval(() => {}, 1000);
+          EOF
