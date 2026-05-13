@@ -175,7 +175,7 @@ jobs:
             ws.send(JSON.stringify({
               APIKey: AIS_API_KEY,
               BoundingBoxes: [[
-                [-45, 165],
+                [-48, 165],
                 [-33, 180]
               ]]
             }));
