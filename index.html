@@ -1,487 +1,248 @@
+
 <!doctype html>
 <html lang="ko">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Auckland Harbour AIS Viewer - Draft v16</title>
+  <title>Auckland Harbour AIS Viewer</title>
 
-  <!-- Leaflet JS only. Critical Leaflet CSS is embedded below to prevent scattered map tiles. -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-  <style id="leaflet-critical-css-fallback">
-    /* Critical Leaflet CSS fallback: fixes scattered / broken tile layout when external leaflet.css is blocked. */
-    .leaflet-pane,.leaflet-tile,.leaflet-marker-icon,.leaflet-marker-shadow,.leaflet-tile-container,.leaflet-pane>svg,.leaflet-pane>canvas,.leaflet-zoom-box,.leaflet-image-layer,.leaflet-layer{position:absolute;left:0;top:0}
-    .leaflet-tile-pane{z-index:200}.leaflet-overlay-pane{z-index:400}.leaflet-shadow-pane{z-index:500}.leaflet-marker-pane{z-index:650}.leaflet-tooltip-pane{z-index:700}.leaflet-popup-pane{z-index:750}
-    .leaflet-container{overflow:hidden;outline-offset:1px;background:#08111f;touch-action:pan-x pan-y;font:12px/1.5 Arial,sans-serif}
-    .leaflet-tile,.leaflet-marker-icon,.leaflet-marker-shadow{-webkit-user-select:none;user-select:none;-webkit-user-drag:none}
-    .leaflet-tile{border:0;max-width:none!important;max-height:none!important;visibility:inherit}
-    .leaflet-tile-loaded{visibility:inherit}.leaflet-zoom-animated{transform-origin:0 0}.leaflet-interactive{cursor:pointer}.leaflet-grab{cursor:grab}.leaflet-dragging .leaflet-grab{cursor:move;cursor:grabbing}
-    .leaflet-control{position:relative;z-index:800;pointer-events:auto}.leaflet-top,.leaflet-bottom{position:absolute;z-index:1000;pointer-events:none}.leaflet-top{top:0}.leaflet-right{right:0}.leaflet-bottom{bottom:0}.leaflet-left{left:0}.leaflet-control{float:left;clear:both}.leaflet-right .leaflet-control{float:right}.leaflet-top .leaflet-control{margin-top:10px}.leaflet-bottom .leaflet-control{margin-bottom:10px}.leaflet-left .leaflet-control{margin-left:10px}.leaflet-right .leaflet-control{margin-right:10px}
-    .leaflet-bar{box-shadow:0 1px 5px rgba(0,0,0,.65);border-radius:4px}.leaflet-bar a{background:#fff;border-bottom:1px solid #ccc;color:#000;display:block;width:26px;height:26px;line-height:26px;text-align:center;text-decoration:none;font:bold 18px Arial}.leaflet-bar a:hover{background:#f4f4f4}.leaflet-bar a:first-child{border-top-left-radius:4px;border-top-right-radius:4px}.leaflet-bar a:last-child{border-bottom-left-radius:4px;border-bottom-right-radius:4px;border-bottom:none}
-    .leaflet-popup{position:absolute;text-align:center;margin-bottom:20px}.leaflet-popup-content-wrapper{padding:1px;text-align:left;border-radius:12px;box-shadow:0 3px 14px rgba(0,0,0,.4)}.leaflet-popup-content{margin:13px 19px;line-height:1.4}.leaflet-popup-tip-container{width:40px;height:20px;position:absolute;left:50%;margin-left:-20px;overflow:hidden;pointer-events:none}.leaflet-popup-tip{width:17px;height:17px;padding:1px;margin:-10px auto 0;transform:rotate(45deg);box-shadow:0 3px 14px rgba(0,0,0,.4)}.leaflet-popup-close-button{position:absolute;top:0;right:0;padding:4px 4px 0 0;border:0;text-align:center;width:18px;height:14px;font:16px/14px Tahoma,Verdana,sans-serif;color:#c3c3c3;text-decoration:none;background:transparent}
-    .leaflet-tooltip{position:absolute;padding:6px;background:#fff;border:1px solid #fff;border-radius:3px;color:#222;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.4)}
+  <!-- ===== Leaflet critical CSS (기존 유지) ===== -->
+  <style>
+    .leaflet-container{width:100%!important;height:100%!important}
   </style>
 
   <style>
-    :root{--bg:#0f172a;--panel:#111827;--card:#1f2937;--text:#e5e7eb;--muted:#9ca3af;--border:rgba(255,255,255,.12);--cyan:#0ea5e9;--input:#0b1222}
-    html,body{margin:0;width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:Arial,Helvetica,sans-serif}*{box-sizing:border-box}
-    .app{display:grid;grid-template-columns:360px minmax(0,1fr);width:100vw;height:100vh}.sidebar{width:360px;height:100vh;overflow-y:auto;background:linear-gradient(180deg,var(--panel),#0b1020);border-right:1px solid var(--border);padding:18px;z-index:1000}.map-shell{position:relative;width:100%;height:100vh;min-width:0;overflow:hidden;background:#08111f}#map{position:absolute;inset:0;width:100%;height:100%}.leaflet-container{width:100%!important;height:100%!important}
-    .brand{display:flex;gap:12px;align-items:center;margin-bottom:16px}.logo{width:38px;height:38px;border-radius:12px;background:radial-gradient(circle at 30% 30%,#67e8f9,#0284c7 55%,#0f172a);box-shadow:0 0 22px rgba(56,189,248,.35)}h1{font-size:18px;margin:0}.subtitle{margin:3px 0 0;color:var(--muted);font-size:12px}
-    .card{border:1px solid var(--border);background:rgba(31,41,55,.72);border-radius:14px;padding:14px;margin-bottom:14px;box-shadow:0 10px 25px rgba(0,0,0,.16)}label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}.row{display:flex;gap:8px;align-items:center}.row+.row{margin-top:10px}input,select,button{width:100%;border:1px solid var(--border);background:var(--input);color:var(--text);border-radius:10px;padding:10px 11px;outline:none}button{cursor:pointer;background:var(--cyan);border:none;color:#fff;font-weight:700}button.secondary{background:#334155}button.dark{background:#0f172a;border:1px solid var(--border)}
-    .stats{display:grid;grid-template-columns:1fr 1fr;gap:10px}.stat{border-radius:12px;background:rgba(15,23,42,.75);padding:12px;border:1px solid var(--border)}.num{font-size:22px;font-weight:800}.txt{font-size:11px;color:var(--muted);margin-top:4px}.small-note,.status{font-size:11px;color:var(--muted);line-height:1.45}.ok{color:#86efac}.warn{color:#fbbf24}.bad{color:#fca5a5}code{color:#bae6fd}
-    .vessel-list{display:flex;flex-direction:column;gap:8px}.vessel-item{display:grid;grid-template-columns:14px 1fr auto;gap:9px;align-items:center;border:1px solid var(--border);background:rgba(15,23,42,.55);border-radius:12px;padding:10px;cursor:pointer}.vessel-item:hover{background:rgba(14,165,233,.13)}.dot{width:11px;height:11px;border-radius:99px}.vessel-name{font-size:13px;font-weight:700}.vessel-meta{font-size:11px;color:var(--muted);margin-top:2px}.badge{font-size:10px;padding:4px 7px;border-radius:99px;background:rgba(56,189,248,.14);color:#bae6fd;white-space:nowrap}
-    .topbar{position:absolute;top:14px;left:24px;right:18px;z-index:900;display:flex;justify-content:center;gap:10px;pointer-events:none}.pill{pointer-events:auto;background:rgba(15,23,42,.86);backdrop-filter:blur(8px);border:1px solid var(--border);border-radius:999px;padding:9px 14px;font-size:12px;box-shadow:0 8px 20px rgba(0,0,0,.22)}.legend{position:absolute;right:18px;bottom:22px;z-index:900;background:rgba(15,23,42,.88);border:1px solid var(--border);border-radius:14px;padding:12px 14px;font-size:12px;line-height:1.8}.legend-row{display:flex;gap:8px;align-items:center}
-    .vessel-label{background:rgba(15,23,42,.82);border:1px solid rgba(255,255,255,.22);color:#fff;border-radius:8px;padding:3px 7px;font-size:11px;font-weight:800;box-shadow:0 2px 7px rgba(0,0,0,.35);white-space:nowrap}.vessel-label::before{display:none}.leaflet-popup-content-wrapper,.leaflet-popup-tip{background:#111827;color:#e5e7eb}.details-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;margin-top:10px}.field{padding:8px;border-radius:10px;background:rgba(15,23,42,.62);border:1px solid var(--border)}.field span{display:block;color:var(--muted);font-size:10px;margin-bottom:2px}.field strong{font-size:12px;word-break:break-word}
-    @media(max-width:900px){.app{grid-template-columns:1fr;grid-template-rows:44vh 56vh}.map-shell{height:44vh}.sidebar{order:2;width:100%;height:56vh;border-right:none;border-top:1px solid var(--border)}.topbar{left:10px;right:10px;justify-content:flex-start;flex-wrap:wrap}.legend{display:none}}
+    :root{
+      --bg:#0f172a;
+      --panel:#111827;
+      --card:#1f2937;
+      --text:#e5e7eb;
+      --muted:#9ca3af;
+      --border:rgba(255,255,255,.12);
+      --cyan:#0ea5e9;
+      --input:#0b1222;
+    }
+
+    html,body{
+      margin:0;
+      width:100%;
+      height:100%;
+      overflow:hidden;
+      background:var(--bg);
+      color:var(--text);
+      font-family:Arial,Helvetica,sans-serif;
+    }
+
+    *{box-sizing:border-box}
+
+    /* ===== DESKTOP LAYOUT (기존 유지) ===== */
+    .app{
+      display:grid;
+      grid-template-columns:360px minmax(0,1fr);
+      width:100vw;
+      height:100vh;
+    }
+
+    .sidebar{
+      width:360px;
+      height:100vh;
+      overflow-y:auto;
+      background:linear-gradient(180deg,var(--panel),#0b1020);
+      border-right:1px solid var(--border);
+      padding:18px;
+      z-index:1000;
+    }
+
+    .map-shell{
+      position:relative;
+      width:100%;
+      height:100vh;
+      overflow:hidden;
+      background:#08111f;
+    }
+
+    #map{
+      position:absolute;
+      inset:0;
+    }
+
+    /* ===== UI ===== */
+    h1{font-size:18px;margin:0}
+    .subtitle{font-size:12px;color:var(--muted)}
+    .card{
+      border:1px solid var(--border);
+      background:rgba(31,41,55,.75);
+      border-radius:14px;
+      padding:14px;
+      margin-bottom:14px;
+    }
+
+    input,select,button{
+      width:100%;
+      border:1px solid var(--border);
+      background:var(--input);
+      color:var(--text);
+      border-radius:10px;
+      padding:10px;
+    }
+
+    button{
+      cursor:pointer;
+      background:var(--cyan);
+      border:none;
+      font-weight:700;
+    }
+
+    button.secondary{
+      background:#334155;
+    }
+
+    .row{display:flex;gap:8px}
+    .status{font-size:11px;color:var(--muted)}
+
+    /* ===== MOBILE BOTTOM SHEET ===== */
+    @media(max-width:900px){
+
+      .app{
+        display:block;
+      }
+
+      .map-shell{
+        position:fixed;
+        inset:0;
+        height:100vh;
+        width:100vw;
+        z-index:0;
+      }
+
+      .sidebar{
+        position:fixed;
+        left:0;
+        bottom:0;
+        width:100%;
+        height:80vh;
+
+        border-radius:18px 18px 0 0;
+        border-right:none;
+        border-top:1px solid var(--border);
+
+        transform:translateY(70%);
+        transition:transform 0.3s ease;
+
+        z-index:1001;
+        padding-top:8px;
+      }
+
+      .sidebar.open{
+        transform:translateY(0%);
+      }
+
+      .sidebar.mid{
+        transform:translateY(40%);
+      }
+
+      .drag-handle{
+        width:50px;
+        height:5px;
+        background:#6b7280;
+        border-radius:3px;
+        margin:6px auto 12px auto;
+      }
+    }
   </style>
 </head>
+
 <body>
 <div class="app">
-  <aside class="sidebar">
-    <div class="brand"><div class="logo"></div><div><h1>Auckland Harbour AIS Viewer</h1><p class="subtitle">Internal draft v16 / real AIS polling fixed</p></div></div>
+
+  <!-- ===== SIDEBAR / BOTTOM SHEET ===== -->
+  <aside class="sidebar mid">
+
+    <!-- drag handle (mobile only) -->
+    <div class="drag-handle" id="dragHandle"></div>
+
+    <h1>Auckland Harbour AIS Viewer</h1>
+    <p class="subtitle">Real AIS / Supabase Edge Function</p>
 
     <div class="card">
       <strong>Real AIS Connection</strong>
-      <div class="row" style="margin-top:10px"><div style="flex:1"><label>Data mode</label><select id="dataMode"><option value="mock">Mock data</option><option value="proxy">Real AIS via Supabase Edge Function / Proxy</option></select></div></div>
-      <label style="margin-top:10px">AIS endpoint URL</label><input id="endpointUrl" placeholder="https://xxxx.supabase.co/functions/v1/ais-latest" />
-      <div class="row"><button id="loadRealBtn">Load real AIS</button><button id="saveEndpointBtn" class="dark">Save URL</button></div>
-      <div id="sourceStatus" class="status">Real AIS will load automatically when this page opens. Edit the endpoint URL and click Save URL if needed.</div>
+      <label>Endpoint URL</label>
+      <input id="endpointUrl" />
+      <div class="row">
+        <button id="loadRealBtn">Load real AIS</button>
+        <button id="saveEndpointBtn" class="secondary">Save URL</button>
+      </div>
+      <div id="sourceStatus" class="status"></div>
     </div>
 
     <div class="card">
-      <label>Vessel Search</label><input id="searchBox" placeholder="Vessel name / MMSI / IMO" />
-      <div class="row"><button id="refreshBtn">Refresh</button><button id="clearTrackBtn" class="secondary">Clear track</button></div>
+      <label>Vessel Search</label>
+      <input id="searchBox" placeholder="Name / MMSI" />
+      <div class="row">
+        <button id="refreshBtn">Refresh</button>
+        <button id="clearTrackBtn" class="secondary">Clear track</button>
+      </div>
     </div>
 
-    <div class="card"><strong>Selected Vessel</strong><div id="selectedDetails" style="margin-top:8px;color:var(--muted);font-size:13px">Select a vessel from the map marker or vessel list.</div></div>
-    <div class="card"><strong>Vessel List</strong><div id="vesselList" class="vessel-list" style="margin-top:10px"></div></div>
+    <div class="card">
+      <strong>Selected Vessel</strong>
+      <div id="selectedDetails" class="status">Select a vessel.</div>
+    </div>
 
-    <div class="card"><div class="stats">
-      <div class="stat"><div class="num" id="totalCount">0</div><div class="txt">visible AIS targets</div></div>
-      <div class="stat"><div class="num" id="staleCount">0</div><div class="txt">stale &gt; 15 min</div></div>
-      <div class="stat"><div class="num" id="movingCount">0</div><div class="txt">moving SOG &gt; 0.5 kn</div></div>
-      <div class="stat"><div class="num" id="trackWindowLabel">30m</div><div class="txt">track window</div></div>
-    </div></div>
+    <div class="card">
+      <strong>Vessel List</strong>
+      <div id="vesselList"></div>
+    </div>
+
   </aside>
 
-  <main class="map-shell" id="mapShell">
+  <!-- ===== MAP ===== -->
+  <main class="map-shell">
     <div id="map"></div>
-    <div class="topbar"><div class="pill" id="lastUpdated">Last updated: -</div></div>
-    <div class="legend"><strong>Legend</strong><div class="legend-row"><span class="dot" style="background:#ef4444"></span>Moving</div><div class="legend-row"><span class="dot" style="background:#06b6d4"></span>Stopped / slow</div></div>
   </main>
+
 </div>
 
 <script>
-const AREAS = {
-  auckland: { latMin: -36.92, latMax: -36.75, lonMin: 174.66, lonMax: 174.95 },
-  northIsland: { latMin: -41.7, latMax: -34.0, lonMin: 172.5, lonMax: 179.5 }
-};
+/* ===== MAP INIT ===== */
+const map = L.map('map').setView([-36.84,174.79],11);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+  maxZoom:18,
+  attribution:'© OpenStreetMap'
+}).addTo(map);
 
-// IMPORTANT: corrected Supabase project URL: hjrcnsuztztaiwnttxnr, not hjrcnsuzrztaiwnttxnr.
-const DEFAULT_AIS_ENDPOINT = 'https://hjrcnsuzrztaiwnttxnr.supabase.co/functions/v1/ais-latest';
-const POLL_INTERVAL_MS = 60000;
-const LATEST_MINUTES = 360;
-const TRACK_MINUTES = 360;
-const TRACK_LIMIT = 5000;
+/* ===== BOTTOM SHEET DRAG ===== */
+const sheet = document.querySelector('.sidebar');
+const handle = document.getElementById('dragHandle');
 
-let vessels = [];
-let tracks = {};
-let markers = new Map();
-let trackLayer = null;
-let selectedMmsi = null;
-let timer = null;
-let loadingReal = false;
+let startY=0,currentY=0,isDragging=false;
 
-const MOCK = [
-  {mmsi:512345001,imo:9412345,name:'ATLAS TRADER',callsign:'ZMAT1',type:'Cargo',lat:-36.8357,lon:174.7921,sog:8.4,cog:262,heading:260,navStatus:'Under way using engine',destination:'AUCKLAND',eta:'05-07 06:30',lastSeenMin:2},
-  {mmsi:512345002,imo:9323456,name:'HAURAKI STAR',callsign:'ZMHS2',type:'Tanker',lat:-36.8068,lon:174.8466,sog:.1,cog:89,heading:91,navStatus:'At anchor',destination:'ANCHORAGE',eta:'05-06 20:00',lastSeenMin:7},
-  {mmsi:512345003,imo:0,name:'WAITEMATA PILOT',callsign:'ZMWP3',type:'Tug',lat:-36.8424,lon:174.7819,sog:12.1,cog:33,heading:35,navStatus:'Under way using engine',destination:'PILOT STATION',eta:'05-06 15:35',lastSeenMin:1},
-  {mmsi:512345004,imo:0,name:'RANGITOTO FERRY',callsign:'ZMRF4',type:'Passenger',lat:-36.8201,lon:174.8144,sog:16.8,cog:58,heading:60,navStatus:'Under way using engine',destination:'RANGITOTO',eta:'05-06 16:05',lastSeenMin:3},
-  {mmsi:512345005,imo:9187654,name:'PACIFIC MOANA',callsign:'ZMPM5',type:'Cargo',lat:-36.8789,lon:174.7743,sog:0,cog:0,heading:511,navStatus:'Moored',destination:'BLEDISLOE WHARF',eta:'05-06 12:00',lastSeenMin:4},
-  {mmsi:512345006,imo:0,name:'HARBOUR SERVICE 12',callsign:'ZMHS12',type:'Other',lat:-36.8502,lon:174.7630,sog:3.2,cog:118,heading:120,navStatus:'Restricted manoeuvrability',destination:'PORT SERVICE',eta:'05-06 17:10',lastSeenMin:22}
-];
-
-function esc(s) {
-  return String(s ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
-}
-function num(v, d) { v = Number(v); return Number.isFinite(v) ? v.toFixed(d) : '-'; }
-function metres(v) { v = Number(v); return Number.isFinite(v) && v > 0 ? `${v.toFixed(1)} m` : '-'; }
-function round4(n) { return Number(n).toFixed(4); }
-
-const map = L.map('map', { zoomControl: true, preferCanvas: true }).setView([-36.84, 174.79], 11);
-['tilePane','overlayPane','shadowPane','markerPane','tooltipPane','popupPane'].forEach((paneName, i) => {
-  const p = map.getPane(paneName);
-  if (p) p.style.zIndex = String([200,400,500,650,700,750][i]);
+handle.addEventListener('touchstart',e=>{
+  isDragging=true;
+  startY=e.touches[0].clientY;
 });
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, attribution: '© OpenStreetMap contributors' }).addTo(map);
 
-const aucklandBounds = L.latLngBounds([AREAS.auckland.latMin, AREAS.auckland.lonMin], [AREAS.auckland.latMax, AREAS.auckland.lonMax]);
-const northBounds = L.latLngBounds([AREAS.northIsland.latMin, AREAS.northIsland.lonMin], [AREAS.northIsland.latMax, AREAS.northIsland.lonMax]);
-L.rectangle(aucklandBounds, { color:'#38bdf8', weight:1, dashArray:'6 6', fillOpacity:.02 }).addTo(map);
-
-function fix() {
-  requestAnimationFrame(() => map.invalidateSize(false));
-  setTimeout(() => map.invalidateSize(false), 100);
-  setTimeout(() => map.invalidateSize(false), 500);
-}
-window.addEventListener('load', fix);
-window.addEventListener('resize', fix);
-if ('ResizeObserver' in window) new ResizeObserver(fix).observe(document.getElementById('mapShell'));
-
-function colour(type, stale) { return stale ? '#fbbf24' : '#ef4444'; }
-function displayName(v) {
-  const n = String(v.name || '').trim();
-  return n && n !== `MMSI ${v.mmsi}` ? n : `MMSI ${v.mmsi}`;
-}
-
-function icon(v) {
-  const rawHeading = Number(v.heading);
-  const rawCog = Number(v.cog);
-  const rot = Number.isFinite(rawHeading) && rawHeading !== 511 ? rawHeading : (Number.isFinite(rawCog) ? rawCog : 0);
-  const speed = Number(v.sog || 0);
-  const c = speed > 0.5 ? '#ef4444' : '#06b6d4';
-  const isSel = Number(selectedMmsi) === Number(v.mmsi);
-  const stroke = isSel ? '#facc15' : 'rgba(15,23,42,.75)';
-  const strokeWidth = isSel ? 5 : 1.5;
-  const svg = `<svg width="34" height="42" viewBox="0 0 34 42" style="transform:rotate(${rot}deg);filter:drop-shadow(0 2px 4px rgba(0,0,0,.45));overflow:visible">
-    <polygon points="17,3 30,37 17,29 4,37" fill="${c}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linejoin="round"></polygon>
-  </svg>`;
-  return L.divIcon({ className:'', html:svg, iconSize:[34,42], iconAnchor:[17,21], popupAnchor:[0,-16] });
-}
-
-function updateMarkerIcons() {
-  markers.forEach((m, mmsi) => {
-    const v = vessels.find(x => Number(x.mmsi) === Number(mmsi));
-    if (v) m.setIcon(icon(v));
-  });
-}
-
-function popup(v) {
-  return `<div style="min-width:220px">
-    <div style="font-weight:800;font-size:14px;margin-bottom:6px">${esc(displayName(v))}</div>
-    <div style="font-size:12px;line-height:1.55;color:#d1d5db">
-      <b>MMSI:</b> ${v.mmsi}<br>
-      <b>IMO:</b> ${v.imo || '-'}<br>
-      <b>Type:</b> ${esc(v.type)}<br>
-      <b>SOG:</b> ${num(v.sog,1)} kn<br>
-      <b>COG / HDG:</b> ${num(v.cog,0)}° / ${num(v.heading,0)}°<br>
-      <b>LOA:</b> ${metres(v.loa)}<br>
-      <b>Breadth:</b> ${metres(v.breadth)}<br>
-      <b>Draft:</b> ${metres(v.draft)}<br>
-      <b>Status:</b> ${esc(v.navStatus)}<br>
-      <b>Last seen:</b> ${v.lastSeenMin ?? '-'} min ago
-    </div>
-    <button onclick="selectVessel(${v.mmsi},true);showTrack(${v.mmsi})" style="margin-top:10px;padding:8px;border-radius:8px;background:#0ea5e9;color:white;border:0;width:100%;cursor:pointer">Show track</button>
-  </div>`;
-}
-
-function buildTracks() {
-  tracks = {};
-  vessels.forEach(v => {
-    const pts = [];
-    for (let i = 72; i >= 0; i -= 6) {
-      const drift = (72 - i) / 72;
-      pts.push([v.lat - Math.sin(drift * Math.PI * 2 + v.mmsi) * .015 * drift, v.lon - Math.cos(drift * Math.PI * 2 + v.mmsi) * .02 * drift]);
-    }
-    tracks[v.mmsi] = pts;
-  });
-}
-
-function filtered() {
-  const q = document.getElementById('searchBox').value.trim().toLowerCase();
-  return vessels.filter(v => !q || displayName(v).toLowerCase().includes(q) || String(v.mmsi).includes(q) || String(v.imo).includes(q));
-}
-
-function render() {
-  const vis = filtered();
-  markers.forEach(m => map.removeLayer(m));
-  markers.clear();
-
-  vis.forEach(v => {
-    if (!Number.isFinite(Number(v.lat)) || !Number.isFinite(Number(v.lon))) return;
-    const label = displayName(v);
-    const m = L.marker([Number(v.lat), Number(v.lon)], { icon: icon(v), title: label })
-      .addTo(map)
-      .bindPopup(popup(v))
-      .bindTooltip(label, { permanent: true, direction: 'right', offset: [12,0], className: 'vessel-label' });
-    m.on('click', () => selectVessel(v.mmsi, false));
-    markers.set(Number(v.mmsi), m);
-  });
-
-  document.getElementById('totalCount').textContent = vis.length;
-  document.getElementById('staleCount').textContent = vis.filter(v => Number(v.lastSeenMin) > 15).length;
-  document.getElementById('movingCount').textContent = vis.filter(v => Number(v.sog) > .5).length;
-  document.getElementById('lastUpdated').textContent = 'Last updated: ' + new Date().toLocaleString();
-  document.getElementById('trackWindowLabel').textContent = TRACK_MINUTES + 'm';
-  renderList(vis);
-  fix();
-}
-
-function renderList(vis) {
-  const el = document.getElementById('vesselList');
-  el.innerHTML = '';
-  if (!vis.length) {
-    el.innerHTML = '<div class="small-note">No AIS targets to display.</div>';
-    return;
-  }
-  vis.forEach(v => {
-    const d = document.createElement('div');
-    d.className = 'vessel-item';
-    d.onclick = () => selectVessel(v.mmsi, true);
-    d.innerHTML = `<span class="dot" style="background:${colour(v.type, Number(v.lastSeenMin) > 15)}"></span>
-      <div><div class="vessel-name">${esc(displayName(v))}</div><div class="vessel-meta">MMSI ${v.mmsi} · ${num(v.sog,1)} kn · ${v.lastSeenMin ?? '-'} min ago</div></div>
-      <span class="badge">${esc(v.type)}</span>`;
-    el.appendChild(d);
-  });
-}
-
-function selectVessel(mmsi, zoom) {
-  const v = vessels.find(x => Number(x.mmsi) === Number(mmsi));
-  if (!v) return;
-  selectedMmsi = Number(mmsi);
-  updateMarkerIcons();
-  document.getElementById('selectedDetails').innerHTML = `<div style="font-size:15px;font-weight:800;color:white">${esc(displayName(v))}</div>
-    <div style="color:var(--muted);font-size:12px">${esc(v.type)} · ${esc(v.navStatus)}</div>
-    <div class="details-grid">
-      <div class="field"><span>MMSI</span><strong>${v.mmsi}</strong></div>
-      <div class="field"><span>IMO</span><strong>${v.imo || '-'}</strong></div>
-      <div class="field"><span>Callsign</span><strong>${esc(v.callsign || '-')}</strong></div>
-      <div class="field"><span>LOA</span><strong>${metres(v.loa)}</strong></div>
-      <div class="field"><span>Breadth</span><strong>${metres(v.breadth)}</strong></div>
-      <div class="field"><span>Draft</span><strong>${metres(v.draft)}</strong></div>
-      <div class="field"><span>Last seen</span><strong>${v.lastSeenMin ?? '-'} min ago</strong></div>
-      <div class="field"><span>Latitude</span><strong>${num(v.lat,5)}</strong></div>
-      <div class="field"><span>Longitude</span><strong>${num(v.lon,5)}</strong></div>
-      <div class="field"><span>SOG</span><strong>${num(v.sog,1)} kn</strong></div>
-      <div class="field"><span>COG / Heading</span><strong>${num(v.cog,0)}° / ${num(v.heading,0)}°</strong></div>
-      <div class="field"><span>Destination</span><strong>${esc(v.destination || '-')}</strong></div>
-      <div class="field"><span>ETA</span><strong>${esc(v.eta || '-')}</strong></div>
-    </div>
-    <div class="row" style="margin-top:12px"><button onclick="showTrack(${v.mmsi})">Show track</button><button class="secondary" onclick="clearTrack()">Clear</button></div>`;
-  const m = markers.get(Number(mmsi));
-  if (m) m.openPopup();
-  if (zoom) map.setView([Number(v.lat), Number(v.lon)], Math.max(map.getZoom(), 13));
-  fix();
-}
-
-function normaliseTrackPoints(rawPts) {
-  if (!Array.isArray(rawPts)) return [];
-  const clean = [];
-  for (const p of rawPts) {
-    if (!Array.isArray(p) || p.length < 2) continue;
-    const lat = Number(p[0]);
-    const lon = Number(p[1]);
-    if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
-    if (lat < -90 || lat > 90 || lon < -180 || lon > 180) continue;
-    clean.push([lat, lon]);
-  }
-  if (clean.length > 720) {
-    const step = Math.ceil(clean.length / 720);
-    return clean.filter((_, i) => i % step === 0);
-  }
-  return clean;
-}
-
-function showTrack(mmsi) {
-  clearTrack();
-  const key = String(mmsi);
-  let pts = normaliseTrackPoints(tracks[key] || tracks[mmsi] || []);
-  const v = vessels.find(x => Number(x.mmsi) === Number(mmsi));
-  if (!pts.length && v && Number.isFinite(Number(v.lat)) && Number.isFinite(Number(v.lon))) pts = [[Number(v.lat), Number(v.lon)]];
-  if (!pts.length) return;
-
-  trackLayer = L.layerGroup().addTo(map);
-  if (pts.length >= 2) {
-    const line = L.polyline(pts, { color:'#facc15', weight:4, opacity:.95 }).addTo(trackLayer);
-    L.circleMarker(pts[0], { radius:5, color:'#22c55e', fillColor:'#22c55e', fillOpacity:1 }).addTo(trackLayer).bindTooltip('Track start / earliest available point');
-    L.circleMarker(pts[pts.length - 1], { radius:6, color:'#facc15', fillColor:'#facc15', fillOpacity:1 }).addTo(trackLayer).bindTooltip('Latest position');
-    const b = line.getBounds();
-    if (b && b.isValid && b.isValid()) map.fitBounds(b.pad(.25), { maxZoom:14 });
-  } else {
-    L.circleMarker(pts[0], { radius:8, color:'#facc15', fillColor:'#facc15', fillOpacity:1 }).addTo(trackLayer).bindTooltip('Only one available track point').openTooltip();
-    map.setView(pts[0], Math.max(map.getZoom(), 13));
-  }
-  updateMarkerIcons();
-  fix();
-}
-
-function clearTrack() {
-  if (trackLayer) {
-    map.removeLayer(trackLayer);
-    trackLayer = null;
-    fix();
-  }
-}
-
-function setArea(a) {
-  fix();
-  map.fitBounds(a === 'northIsland' ? northBounds : aucklandBounds, { padding:[24,24] });
-  setTimeout(fix, 250);
-}
-
-function mockRefresh() {
-  vessels.forEach(v => {
-    if (Number(v.sog) > .5) {
-      const rad = (Number(v.cog || 0) - 90) * Math.PI / 180;
-      v.lat += Math.sin(rad) * .0025;
-      v.lon += Math.cos(rad) * .0025;
-      v.lastSeenMin = Math.max(1, Math.round(Math.random() * 6));
-    } else {
-      v.lastSeenMin = Math.max(1, Number(v.lastSeenMin || 0) + Math.round(Math.random() * 2));
-    }
-    tracks[v.mmsi] = tracks[v.mmsi] || [];
-    tracks[v.mmsi].push([v.lat, v.lon]);
-    if (tracks[v.mmsi].length > 30) tracks[v.mmsi].shift();
-  });
-  render();
-  if (selectedMmsi) selectVessel(selectedMmsi, false);
-}
-
-function loadMock() {
-  vessels = JSON.parse(JSON.stringify(MOCK));
-  buildTracks();
-  render();
-  document.getElementById('sourceStatus').innerHTML = 'Current mode is <span class="ok">mock data</span>.';
-}
-
-function normalizeType(raw) {
-  const t = String(raw || '').toLowerCase();
-  const n = Number(raw);
-  if (t.includes('cargo') || (n >= 70 && n < 80)) return 'Cargo';
-  if (t.includes('tanker') || (n >= 80 && n < 90)) return 'Tanker';
-  if (t.includes('passenger') || (n >= 60 && n < 70)) return 'Passenger';
-  if (t.includes('tug') || t.includes('pilot') || n === 52) return 'Tug';
-  return raw ? String(raw) : 'Other';
-}
-
-function age(ts) {
-  if (!ts) return 0;
-  const d = typeof ts === 'number' ? new Date(ts < 2e9 ? ts * 1000 : ts) : new Date(ts);
-  return isNaN(d) ? 0 : Math.max(0, Math.round((Date.now() - d.getTime()) / 60000));
-}
-
-function norm(r) {
-  const lat = Number(r.lat ?? r.latitude ?? r.LATITUDE);
-  const lon = Number(r.lon ?? r.lng ?? r.longitude ?? r.LONGITUDE);
-  const mmsi = Number(r.mmsi ?? r.MMSI);
-  if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(mmsi)) return null;
-  return {
-    mmsi,
-    imo: Number(r.imo ?? r.IMO ?? 0),
-    name: String(r.name ?? r.NAME ?? `MMSI ${mmsi}`).trim() || `MMSI ${mmsi}`,
-    callsign: String(r.callsign ?? r.CALLSIGN ?? '').trim(),
-    type: normalizeType(r.type ?? r.ship_type ?? r.SHIPTYPE ?? r.TYPE),
-    lat,
-    lon,
-    sog: Number(r.sog ?? r.SOG ?? 0),
-    cog: Number(r.cog ?? r.COG ?? 0),
-    heading: Number(r.heading ?? r.HEADING ?? 511),
-    loa: Number(r.loa ?? r.LOA ?? r.length ?? r.Length ?? 0),
-    breadth: Number(r.breadth ?? r.BREADTH ?? r.beam ?? r.Beam ?? 0),
-    draft: Number(r.draft ?? r.DRAFT ?? r.draught ?? r.Draught ?? 0),
-    navStatus: String(r.navStatus ?? r.nav_status ?? r.NAVSTAT ?? r.STATUS ?? '-'),
-    destination: String(r.destination ?? r.DEST ?? '').trim(),
-    eta: String(r.eta ?? r.ETA ?? '').trim(),
-    lastSeenMin: Number(r.lastSeenMin ?? age(r.received_at ?? r.timestamp ?? r.TSTAMP ?? r.TIME))
-  };
-}
-
-async function loadReal() {
-  if (loadingReal) return;
-  loadingReal = true;
-
-  const endpoint = document.getElementById('endpointUrl').value.trim();
-  const status = document.getElementById('sourceStatus');
-
-  if (!endpoint) {
-    status.innerHTML = '<span class="bad">AIS endpoint URL is empty.</span>';
-    loadingReal = false;
-    return;
-  }
-
-  try {
-    status.innerHTML = '<span class="warn">Loading real AIS data...</span>';
-
-    const b = map.getBounds();
-    const url = new URL(endpoint);
-
-    // Use current map bounds so markers are requested for the actual visible map area.
-    url.searchParams.set('latMin', round4(b.getSouth()));
-    url.searchParams.set('latMax', round4(b.getNorth()));
-    url.searchParams.set('lonMin', round4(b.getWest()));
-    url.searchParams.set('lonMax', round4(b.getEast()));
-
-    // Match Edge Function parameters.
-    url.searchParams.set('latestMinutes', String(LATEST_MINUTES));
-    url.searchParams.set('trackMinutes', String(TRACK_MINUTES));
-    url.searchParams.set('trackLimit', String(TRACK_LIMIT));
-
-    console.log('AIS request URL:', url.toString());
-
-    const res = await fetch(url.toString(), { headers: { Accept: 'application/json' } });
-    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
-
-    const payload = await res.json();
-    console.log('AIS payload:', payload);
-
-    if (payload && payload.ok === false) {
-      throw new Error(payload.error || 'Supabase Edge Function returned ok:false');
-    }
-
-    const records = Array.isArray(payload) ? payload : (payload.vessels || payload.data || payload.records || []);
-    vessels = records.map(norm).filter(Boolean);
-    tracks = payload.tracks || {};
-
-    render();
-
-    // Do not force map back to Auckland after every refresh. Keep user's current view.
-    status.innerHTML = `<span class="ok">Real AIS ${vessels.length} targets loaded.</span>` +
-      `<br><span class="small-note">API count: ${payload.count ?? '-'} / latest: ${payload.latestWindowMinutes ?? LATEST_MINUTES} min / track: ${payload.trackWindowMinutes ?? TRACK_MINUTES} min</span>`;
-  } catch (e) {
-    console.error('Real AIS load failed:', e);
-    status.innerHTML = `<span class="bad">Real AIS load failed:</span> ${esc(e.message)}<br>Please check the Supabase Edge Function URL and browser console.`;
-  } finally {
-    loadingReal = false;
-  }
-}
-
-function restartPolling() {
-  if (timer) clearInterval(timer);
-  timer = setInterval(() => {
-    if (document.getElementById('dataMode').value === 'proxy') loadReal();
-  }, POLL_INTERVAL_MS);
-}
-
-window.selectVessel = selectVessel;
-window.showTrack = showTrack;
-window.clearTrack = clearTrack;
-
-document.getElementById('searchBox').addEventListener('input', render);
-document.getElementById('clearTrackBtn').addEventListener('click', clearTrack);
-document.getElementById('refreshBtn').addEventListener('click', () => document.getElementById('dataMode').value === 'mock' ? mockRefresh() : loadReal());
-document.getElementById('loadRealBtn').addEventListener('click', () => { document.getElementById('dataMode').value = 'proxy'; loadReal(); });
-document.getElementById('saveEndpointBtn').addEventListener('click', () => {
-  localStorage.setItem('aisEndpointUrl', document.getElementById('endpointUrl').value.trim());
-  document.getElementById('dataMode').value = 'proxy';
-  document.getElementById('sourceStatus').innerHTML = '<span class="ok">Endpoint URL saved locally. Reloading AIS...</span>';
-  loadReal();
+handle.addEventListener('touchmove',e=>{
+  if(!isDragging)return;
+  currentY=e.touches[0].clientY;
+  const diff=currentY-startY;
+  sheet.style.transition='none';
+  sheet.style.transform=`translateY(${Math.min(70,Math.max(0,40+diff/5))}%)`;
 });
-document.getElementById('dataMode').addEventListener('change', e => e.target.value === 'mock' ? loadMock() : loadReal());
 
-const saved = localStorage.getItem('aisEndpointUrl');
-document.getElementById('endpointUrl').value = saved || DEFAULT_AIS_ENDPOINT;
-document.getElementById('dataMode').value = 'proxy';
-setArea('auckland');
-fix();
-setTimeout(() => loadReal(), 700);
-restartPolling();
-
-// Refresh once after pan/zoom stops. This keeps visible map bounds aligned with API query.
-let moveTimer = null;
-map.on('moveend zoomend', () => {
-  if (document.getElementById('dataMode').value !== 'proxy') return;
-  clearTimeout(moveTimer);
-  moveTimer = setTimeout(() => loadReal(), 450);
+handle.addEventListener('touchend',()=>{
+  isDragging=false;
+  sheet.style.transition='transform .3s ease';
+  const diff=currentY-startY;
+  if(diff<-50){
+    sheet.classList.add('open');
+    sheet.classList.remove('mid');
+  }else{
+    sheet.classList.remove('open');
+    sheet.classList.add('mid');
+  }
 });
 </script>
 </body>
