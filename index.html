@@ -32,12 +32,22 @@
     .vessel-list{display:flex;flex-direction:column;gap:8px}.vessel-item{display:grid;grid-template-columns:14px 1fr auto;gap:9px;align-items:center;border:1px solid var(--border);background:rgba(15,23,42,.55);border-radius:12px;padding:10px;cursor:pointer}.vessel-item:hover{background:rgba(14,165,233,.13)}.dot{width:11px;height:11px;border-radius:99px}.vessel-name{font-size:13px;font-weight:700}.vessel-meta{font-size:11px;color:var(--muted);margin-top:2px}.badge{font-size:10px;padding:4px 7px;border-radius:99px;background:rgba(56,189,248,.14);color:#bae6fd;white-space:nowrap}
     .topbar{position:absolute;top:14px;left:24px;right:18px;z-index:900;display:flex;justify-content:center;gap:10px;pointer-events:none}.pill{pointer-events:auto;background:rgba(15,23,42,.86);backdrop-filter:blur(8px);border:1px solid var(--border);border-radius:999px;padding:9px 14px;font-size:12px;box-shadow:0 8px 20px rgba(0,0,0,.22)}.legend{position:absolute;right:18px;bottom:22px;z-index:900;background:rgba(15,23,42,.88);border:1px solid var(--border);border-radius:14px;padding:12px 14px;font-size:12px;line-height:1.8}.legend-row{display:flex;gap:8px;align-items:center}
     .vessel-label{background:rgba(15,23,42,.82);border:1px solid rgba(255,255,255,.22);color:#fff;border-radius:8px;padding:3px 7px;font-size:11px;font-weight:800;box-shadow:0 2px 7px rgba(0,0,0,.35);white-space:nowrap}.vessel-label::before{display:none}.leaflet-popup-content-wrapper,.leaflet-popup-tip{background:#111827;color:#e5e7eb}.details-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;margin-top:10px}.field{padding:8px;border-radius:10px;background:rgba(15,23,42,.62);border:1px solid var(--border)}.field span{display:block;color:var(--muted);font-size:10px;margin-bottom:2px}.field strong{font-size:12px;word-break:break-word}
-    @media(max-width:900px){.app{grid-template-columns:1fr;grid-template-rows:44vh 56vh}.map-shell{height:44vh}.sidebar{order:2;width:100%;height:56vh;border-right:none;border-top:1px solid var(--border)}.topbar{left:10px;right:10px;justify-content:flex-start;flex-wrap:wrap}.legend{display:none}}
+    @media(max-width:900px){
+  .app{display:block;width:100vw;height:100vh;overflow:hidden}
+  .map-shell{position:fixed;inset:0;width:100vw;height:100dvh;min-width:0;z-index:1}
+  #map{position:absolute;inset:0;width:100%;height:100%}
+  .sidebar{position:fixed;left:0;right:0;bottom:0;width:100%;height:82dvh;max-height:82dvh;z-index:1100;border-right:none;border-top:1px solid var(--border);border-radius:18px 18px 0 0;padding:8px 18px 18px;box-shadow:0 -18px 40px rgba(0,0,0,.35);transform:translateY(calc(100% - 148px));transition:transform .28s ease;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;touch-action:pan-y}
+  .drag-handle-wrap{position:sticky;top:0;z-index:5;background:linear-gradient(180deg,var(--panel),rgba(17,24,39,.92));padding:6px 0 10px;margin:-8px -18px 10px;border-radius:18px 18px 0 0;cursor:grab;touch-action:none}
+  .drag-handle{width:52px;height:5px;background:#9ca3af;border-radius:999px;margin:0 auto;box-shadow:0 1px 2px rgba(0,0,0,.35)}
+  .topbar{top:10px;left:10px;right:10px;justify-content:flex-start;flex-wrap:wrap;z-index:900}.pill{font-size:11px;padding:8px 11px}.legend{display:none}
+}
+@media(min-width:901px){.drag-handle-wrap{display:none}}
   </style>
 </head>
 <body>
 <div class="app">
-  <aside class="sidebar">
+  <aside class="sidebar" id="bottomSheet">
+    <div class="drag-handle-wrap" id="dragHandle" aria-label="Drag panel"><div class="drag-handle"></div></div>
     <div class="brand"><div class="logo"></div><div><h1>Auckland Harbour AIS Viewer</h1><p class="subtitle">Internal draft v16 / real AIS polling fixed</p></div></div>
 
     <div class="card">
@@ -77,7 +87,7 @@ const AREAS = {
   northIsland: { latMin: -41.7, latMax: -34.0, lonMin: 172.5, lonMax: 179.5 }
 };
 
-// IMPORTANT: corrected Supabase project URL: hjrcnsuztztaiwnttxnr, not hjrcnsuzrztaiwnttxnr.
+// Supabase Edge Function endpoint.
 const DEFAULT_AIS_ENDPOINT = 'https://hjrcnsuzrztaiwnttxnr.supabase.co/functions/v1/ais-latest';
 const POLL_INTERVAL_MS = 60000;
 const LATEST_MINUTES = 360;
@@ -239,6 +249,7 @@ function selectVessel(mmsi, zoom) {
   const v = vessels.find(x => Number(x.mmsi) === Number(mmsi));
   if (!v) return;
   selectedMmsi = Number(mmsi);
+  if (window.innerWidth <= 900 && typeof setSheetState === 'function') setSheetState('half');
   updateMarkerIcons();
   document.getElementById('selectedDetails').innerHTML = `<div style="font-size:15px;font-weight:800;color:white">${esc(displayName(v))}</div>
     <div style="color:var(--muted);font-size:12px">${esc(v.type)} · ${esc(v.navStatus)}</div>
@@ -476,13 +487,106 @@ fix();
 setTimeout(() => loadReal(), 700);
 restartPolling();
 
-// Refresh once after pan/zoom stops. This keeps visible map bounds aligned with API query.
-let moveTimer = null;
-map.on('moveend zoomend', () => {
-  if (document.getElementById('dataMode').value !== 'proxy') return;
-  clearTimeout(moveTimer);
-  moveTimer = setTimeout(() => loadReal(), 450);
-});
+
+// ===== Mobile bottom sheet panel =====
+const bottomSheet = document.getElementById('bottomSheet');
+const dragHandle = document.getElementById('dragHandle');
+let sheetState = 'collapsed';
+let sheetStartY = 0;
+let sheetStartTranslate = 0;
+let sheetDragging = false;
+let sheetLastY = 0;
+
+function isMobileSheet() {
+  return window.innerWidth <= 900;
+}
+
+function sheetPositions() {
+  const h = bottomSheet ? bottomSheet.getBoundingClientRect().height : 0;
+  return {
+    open: 0,
+    half: Math.round(h * 0.42),
+    collapsed: Math.max(0, h - 148),
+  };
+}
+
+function currentSheetTranslate() {
+  if (!bottomSheet) return 0;
+  const style = window.getComputedStyle(bottomSheet);
+  const matrix = new DOMMatrixReadOnly(style.transform);
+  return Number.isFinite(matrix.m42) ? matrix.m42 : 0;
+}
+
+function setSheetState(state, animate = true) {
+  if (!bottomSheet) return;
+  if (!isMobileSheet()) {
+    bottomSheet.style.transform = '';
+    bottomSheet.style.transition = '';
+    return;
+  }
+  const pos = sheetPositions();
+  sheetState = state;
+  bottomSheet.style.transition = animate ? 'transform .28s ease' : 'none';
+  bottomSheet.style.transform = `translateY(${pos[state]}px)`;
+  setTimeout(fix, 40);
+}
+
+function nearestSheetState(y) {
+  const pos = sheetPositions();
+  let best = 'collapsed';
+  let bestDist = Infinity;
+  for (const [state, value] of Object.entries(pos)) {
+    const dist = Math.abs(y - value);
+    if (dist < bestDist) {
+      best = state;
+      bestDist = dist;
+    }
+  }
+  return best;
+}
+
+if (dragHandle && bottomSheet) {
+  dragHandle.addEventListener('pointerdown', (e) => {
+    if (!isMobileSheet()) return;
+    sheetDragging = true;
+    sheetStartY = e.clientY;
+    sheetLastY = e.clientY;
+    sheetStartTranslate = currentSheetTranslate();
+    bottomSheet.style.transition = 'none';
+    dragHandle.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+
+  dragHandle.addEventListener('pointermove', (e) => {
+    if (!sheetDragging || !isMobileSheet()) return;
+    sheetLastY = e.clientY;
+    const pos = sheetPositions();
+    const next = Math.min(pos.collapsed, Math.max(pos.open, sheetStartTranslate + (e.clientY - sheetStartY)));
+    bottomSheet.style.transform = `translateY(${next}px)`;
+    e.preventDefault();
+  });
+
+  dragHandle.addEventListener('pointerup', (e) => {
+    if (!sheetDragging) return;
+    sheetDragging = false;
+    const delta = sheetLastY - sheetStartY;
+    const y = currentSheetTranslate();
+    let target = nearestSheetState(y);
+    if (delta < -70) target = sheetState === 'collapsed' ? 'half' : 'open';
+    if (delta > 70) target = sheetState === 'open' ? 'half' : 'collapsed';
+    setSheetState(target, true);
+    try { dragHandle.releasePointerCapture(e.pointerId); } catch (_) {}
+  });
+
+  dragHandle.addEventListener('click', () => {
+    if (!isMobileSheet()) return;
+    setSheetState(sheetState === 'collapsed' ? 'half' : 'collapsed', true);
+  });
+}
+
+window.addEventListener('resize', () => setSheetState(sheetState, false));
+setTimeout(() => setSheetState('collapsed', false), 100);
+
 </script>
 </body>
 </html>
